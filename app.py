@@ -34,6 +34,61 @@ def read_process_output(proc):
 def index():
     return render_template('index.html')
 
+@app.route('/api/select-file', methods=['POST'])
+def select_file():
+    """
+    Abre uma caixa de diálogo nativa para selecionar um arquivo (.mp4 ou .srt).
+    """
+    import tkinter as tk
+    from tkinter import filedialog
+
+    data = request.json or {}
+    file_type = data.get('type')
+
+    file_types = [("Todos os arquivos", "*.*")]
+    if file_type == 'video':
+        file_types = [("Vídeo DJI MP4", "*.mp4"), ("Todos os arquivos", "*.*")]
+    elif file_type == 'srt':
+        file_types = [("Legenda de Telemetria SRT", "*.srt"), ("Todos os arquivos", "*.*")]
+
+    filepath = ""
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        filepath = filedialog.askopenfilename(
+            title="Selecionar Arquivo",
+            filetypes=file_types
+        )
+        root.destroy()
+    except Exception as e:
+        print(f"[Erro tkinter] Ao selecionar arquivo: {e}")
+
+    return jsonify({'path': filepath})
+
+@app.route('/api/select-folder', methods=['POST'])
+def select_folder():
+    """
+    Abre uma caixa de diálogo nativa para selecionar uma pasta.
+    """
+    import tkinter as tk
+    from tkinter import filedialog
+
+    folderpath = ""
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        folderpath = filedialog.askdirectory(
+            title="Selecionar Pasta"
+        )
+        root.destroy()
+    except Exception as e:
+        print(f"[Erro tkinter] Ao selecionar pasta: {e}")
+
+    return jsonify({'path': folderpath})
+
+
 @app.route('/api/status', methods=['GET'])
 def status():
     """

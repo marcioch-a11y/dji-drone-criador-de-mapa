@@ -188,6 +188,35 @@
             box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
         }
 
+        .input-with-button {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .input-with-button input {
+            flex: 1;
+        }
+
+        .btn-browse {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 12px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .btn-browse:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: var(--accent-blue);
+        }
+
+
         .row-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -361,11 +390,28 @@
             <div id="videoFields" class="form-group-container" style="display: flex; flex-direction: column; gap: 20px;">
                 <div class="form-group">
                     <label for="videoPath">Caminho do Vídeo (.MP4)</label>
-                    <input type="text" id="videoPath" placeholder="Ex: C:\Users\mkas2\Desktop\talhao\teste\DJI_0008_D.MP4">
+                    <div class="input-with-button">
+                        <input type="text" id="videoPath" placeholder="Clique em Procurar ou insira o caminho do vídeo">
+                        <button type="button" class="btn-browse" onclick="selectFile('video', 'videoPath')">Procurar...</button>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label for="videoInterval">Intervalo de Amostragem (segundos)</label>
                     <input type="number" id="videoInterval" value="1.5" step="0.1" min="0.1">
+                </div>
+                <div class="row-grid">
+                    <div class="form-group">
+                        <label for="startTimeVideo">Corte Inicial (segundos)</label>
+                        <input type="number" id="startTimeVideo" value="8.0" step="1" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="endTime">Corte Final (segundos - opcional)</label>
+                        <input type="number" id="endTime" placeholder="Ex: 40">
+                    </div>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="forceTime">
+                    <label for="forceTime">Forçar Processamento (ignora desalinhamendo de tempo)</label>
                 </div>
             </div>
 
@@ -373,49 +419,49 @@
             <div id="photoFields" class="form-group-container" style="display: none; flex-direction: column; gap: 20px;">
                 <div class="form-group">
                     <label for="photosDir">Caminho da Pasta de Fotos</label>
-                    <input type="text" id="photosDir" placeholder="Ex: C:\Users\mkas2\Desktop\talhao">
+                    <div class="input-with-button">
+                        <input type="text" id="photosDir" placeholder="Clique em Procurar ou insira o caminho da pasta">
+                        <button type="button" class="btn-browse" onclick="selectFolder('photosDir')">Procurar...</button>
+                    </div>
                 </div>
-                <div class="row-grid">
+                
+                <div class="checkbox-group">
+                    <input type="checkbox" id="matchDatetime" checked onchange="togglePhotoSyncFields()">
+                    <label for="matchDatetime">Sincronizar por Data/Hora Absoluta no Nome do Arquivo</label>
+                </div>
+
+                <div id="photoSeqFields" class="row-grid" style="display: none;">
                     <div class="form-group">
                         <label for="photoInterval">Intervalo Presumido (segundos)</label>
                         <input type="number" id="photoInterval" value="2.0" step="0.1" min="0.1">
                     </div>
                     <div class="form-group">
-                        <label for="photoFilter">Filtro de Arquivos (Glob)</label>
-                        <input type="text" id="photoFilter" value="DJI_20260610*.JPG" placeholder="Ex: DJI_*.JPG">
+                        <label for="startTimePhoto">Corte Inicial (segundos)</label>
+                        <input type="number" id="startTimePhoto" value="8.0" step="1" min="0">
                     </div>
                 </div>
-                <div class="checkbox-group">
-                    <input type="checkbox" id="matchDatetime" checked>
-                    <label for="matchDatetime">Sincronizar por Data/Hora Absoluta no Nome do Arquivo</label>
+
+                <div class="form-group">
+                    <label for="photoFilter">Filtro de Arquivos (Glob)</label>
+                    <input type="text" id="photoFilter" value="DJI_20260610*.JPG" placeholder="Ex: DJI_*.JPG">
                 </div>
             </div>
 
             <!-- Inputs Comuns -->
             <div class="form-group">
                 <label for="srtPath">Caminho da Telemetria (.SRT)</label>
-                <input type="text" id="srtPath" placeholder="Ex: C:\Users\mkas2\Desktop\talhao\teste\DJI_0008_D.SRT">
+                <div class="input-with-button">
+                    <input type="text" id="srtPath" placeholder="Clique em Procurar ou insira o caminho do arquivo .SRT">
+                    <button type="button" class="btn-browse" onclick="selectFile('srt', 'srtPath')">Procurar...</button>
+                </div>
             </div>
 
             <div class="form-group">
                 <label for="outDir">Diretório de Destino das Fotos Georreferenciadas</label>
-                <input type="text" id="outDir" placeholder="Ex: C:\Users\mkas2\Desktop\talhao\teste\output_images">
-            </div>
-
-            <div class="row-grid">
-                <div class="form-group">
-                    <label for="startTime">Corte Inicial (segundos)</label>
-                    <input type="number" id="startTime" value="8.0" step="1" min="0">
+                <div class="input-with-button">
+                    <input type="text" id="outDir" placeholder="Clique em Procurar ou insira o caminho do destino">
+                    <button type="button" class="btn-browse" onclick="selectFolder('outDir')">Procurar...</button>
                 </div>
-                <div class="form-group">
-                    <label for="endTime">Corte Final (segundos - opcional)</label>
-                    <input type="number" id="endTime" placeholder="Ex: 40">
-                </div>
-            </div>
-
-            <div class="checkbox-group">
-                <input type="checkbox" id="forceTime">
-                <label for="forceTime">Forçar Processamento (ignora desalinhamendo de tempo)</label>
             </div>
 
             <!-- Botões de Ação -->
@@ -427,6 +473,7 @@
                     <span>🗺️</span> Processar no WebODM (Gerar Ortofoto e KMZ 2D)
                 </button>
             </div>
+
         </div>
 
         <div class="terminal-panel">
@@ -458,12 +505,51 @@
             document.getElementById('videoFields').style.display = mode === 'video' ? 'flex' : 'none';
             document.getElementById('photoFields').style.display = mode === 'photos' ? 'flex' : 'none';
             
+            togglePhotoSyncFields();
+
             // Sugere caminhos padrão baseado no modo
             if (mode === 'photos') {
                 document.getElementById('outDir').placeholder = "Ex: C:\\Users\\mkas2\\Desktop\\talhao\\webodm_results_photos";
             } else {
                 document.getElementById('outDir').placeholder = "Ex: C:\\Users\\mkas2\\Desktop\\talhao\\teste\\output_images";
             }
+        }
+
+        function togglePhotoSyncFields() {
+            if (currentMode === 'photos') {
+                const matchDt = document.getElementById('matchDatetime').checked;
+                document.getElementById('photoSeqFields').style.display = matchDt ? 'none' : 'grid';
+            } else {
+                document.getElementById('photoSeqFields').style.display = 'none';
+            }
+        }
+
+        function selectFile(type, targetId) {
+            fetch('/api/select-file', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: type })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.path) {
+                    document.getElementById(targetId).value = data.path;
+                }
+            })
+            .catch(err => console.error("Erro ao selecionar arquivo:", err));
+        }
+
+        function selectFolder(targetId) {
+            fetch('/api/select-folder', {
+                method: 'POST'
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.path) {
+                    document.getElementById(targetId).value = data.path;
+                }
+            })
+            .catch(err => console.error("Erro ao selecionar pasta:", err));
         }
 
         function clearTerminal() {
@@ -542,16 +628,21 @@
             initLogStream();
             updateStatus(true, 'Georreferenciando...');
 
+            const isVideo = currentMode === 'video';
+            const startTime = isVideo 
+                ? (parseFloat(document.getElementById('startTimeVideo').value) || 0.0)
+                : (document.getElementById('matchDatetime').checked ? 0.0 : (parseFloat(document.getElementById('startTimePhoto').value) || 0.0));
+
             const payload = {
                 mode: currentMode,
                 srt: document.getElementById('srtPath').value,
                 out: document.getElementById('outDir').value,
-                start: parseFloat(document.getElementById('startTime').value) || 0.0,
-                end: document.getElementById('endTime').value ? parseFloat(document.getElementById('endTime').value) : null,
-                force: document.getElementById('forceTime').checked
+                start: startTime,
+                end: isVideo && document.getElementById('endTime').value ? parseFloat(document.getElementById('endTime').value) : null,
+                force: isVideo ? document.getElementById('forceTime').checked : false
             };
 
-            if (currentMode === 'video') {
+            if (isVideo) {
                 payload.video = document.getElementById('videoPath').value;
                 payload.interval = parseFloat(document.getElementById('videoInterval').value) || 1.5;
             } else {
@@ -581,6 +672,7 @@
                 updateStatus(false);
             });
         }
+
 
         function startWebODM() {
             clearTerminal();
