@@ -19,11 +19,21 @@ def main():
     pattern = args.filter
     files = glob.glob(os.path.join(args.photos, pattern))
     
-    # Se o padrão for *.jpg e não achar nada, tenta com *.JPG para sistemas Windows
-    if pattern.endswith('.jpg') and not files:
-        files = glob.glob(os.path.join(args.photos, pattern.replace('.jpg', '.JPG')))
+    # Se não achar nada com o padrão específico, tenta alternar a extensão (maiúscula/minúscula)
+    if not files:
+        if pattern.endswith('.jpg'):
+            files = glob.glob(os.path.join(args.photos, pattern[:-4] + '.JPG'))
+        elif pattern.endswith('.JPG'):
+            files = glob.glob(os.path.join(args.photos, pattern[:-4] + '.jpg'))
     
-    files = sorted(files)
+    # Se ainda assim não encontrar nada, busca qualquer arquivo de imagem na pasta (caso a pasta não tenha o prefixo frame_/photo_)
+    if not files:
+        extensions = ['*.jpg', '*.JPG', '*.jpeg', '*.JPEG', '*.png', '*.PNG']
+        for ext in extensions:
+            files.extend(glob.glob(os.path.join(args.photos, ext)))
+    
+    # Remove duplicatas mantendo a ordenação
+    files = sorted(list(set(files)))
     
     print("=== INICIANDO PROCESSAMENTO NO WEBODM (NODEODM) ===")
     print(f"Diretório de entrada: {args.photos}")
@@ -31,8 +41,9 @@ def main():
     print(f"Total de imagens encontradas: {len(files)}")
     
     if not files:
-        print("Erro: Nenhuma imagem encontrada com o padrão especificado.", file=sys.stderr)
+        print("Erro: Nenhuma imagem encontrada com o padrão especificado ou qualquer outro formato de imagem (.jpg, .png, .jpeg) na pasta informada.", file=sys.stderr)
         sys.exit(1)
+
         
     # Conexão com o NodeODM local
     print("\nConectando ao NodeODM na porta 3000...")
