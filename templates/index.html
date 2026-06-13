@@ -360,6 +360,191 @@
             background: rgba(255,255,255,0.05);
         }
 
+        /* Modal do Explorador de Arquivos Web */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            width: 90%;
+            max-width: 800px;
+            height: 80%;
+            max-height: 600px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+        }
+
+        .modal-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 20px;
+            cursor: pointer;
+        }
+
+        .close-btn:hover {
+            color: var(--text-main);
+        }
+
+        .modal-body {
+            flex: 1;
+            display: flex;
+            min-height: 0;
+        }
+
+        .explorer-sidebar {
+            width: 220px;
+            border-right: 1px solid var(--border-color);
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow-y: auto;
+        }
+
+        .explorer-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 16px 24px;
+            min-width: 0;
+        }
+
+        .shortcut-section, .drives-section {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .sidebar-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .sidebar-btn {
+            background: none;
+            border: none;
+            color: var(--text-main);
+            padding: 8px 12px;
+            text-align: left;
+            font-size: 13px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .sidebar-btn:hover {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--accent-blue);
+        }
+
+        .explorer-path-bar {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .path-input {
+            flex: 1;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .btn-up {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            width: 36px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-up:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        .explorer-list {
+            flex: 1;
+            border: 1px solid var(--border-color);
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .explorer-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            user-select: none;
+        }
+
+        .explorer-item:hover {
+            background: rgba(255,255,255,0.05);
+        }
+
+        .explorer-item.selected {
+            background: rgba(59, 130, 246, 0.2);
+            border-left: 3px solid var(--accent-blue);
+        }
+
+        .explorer-item-icon {
+            font-size: 16px;
+        }
+
+        .modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
         footer {
             padding: 20px;
             text-align: center;
@@ -490,6 +675,46 @@
         </div>
     </main>
 
+    <!-- Modal do Explorador de Arquivos Web -->
+    <div id="explorerModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="explorerTitle">Selecionar Pasta / Arquivo</h3>
+                <button type="button" class="close-btn" onclick="closeExplorer()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="explorer-sidebar">
+                    <div class="shortcut-section">
+                        <span class="sidebar-title">Atalhos</span>
+                        <div id="explorerShortcuts" style="display:flex; flex-direction:column; gap:4px;">
+                            <!-- Dinâmico -->
+                        </div>
+                    </div>
+                    <div class="drives-section" style="margin-top:16px;">
+                        <span class="sidebar-title">Dispositivos</span>
+                        <div id="explorerDrives" style="display:flex; flex-direction:column; gap:4px;">
+                            <!-- Dinâmico -->
+                        </div>
+                    </div>
+                </div>
+                <div class="explorer-main">
+                    <div class="explorer-path-bar">
+                        <button type="button" class="btn-up" onclick="navigateUp()" title="Subir um nível">⬆️</button>
+                        <input type="text" id="explorerPathInput" class="path-input" onkeypress="handlePathKeyPress(event)">
+                        <button type="button" class="btn" style="padding: 8px 16px; box-shadow: none;" onclick="loadDirectory(document.getElementById('explorerPathInput').value)">Ir</button>
+                    </div>
+                    <div id="explorerList" class="explorer-list">
+                        <!-- Itens da pasta -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn" style="background: rgba(255,255,255,0.08); box-shadow: none; color: var(--text-muted);" onclick="closeExplorer()">Cancelar</button>
+                <button type="button" id="btnConfirmSelect" class="btn" onclick="confirmSelection()">Selecionar</button>
+            </div>
+        </div>
+    </div>
+
     <footer>
         <p>Desenvolvido de forma autônoma como ferramenta profissional de Geoprocessamento.</p>
     </footer>
@@ -524,33 +749,197 @@
             }
         }
 
+        let explorerState = {
+            currentPath: '',
+            parentPath: '',
+            selectedItem: null,
+            targetInputId: '',
+            mode: 'folder', // 'folder' ou 'file'
+            fileType: 'all', // 'video', 'srt', 'all'
+            drives: [],
+            shortcuts: {}
+        };
+
         function selectFile(type, targetId) {
-            fetch('/api/select-file', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: type })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.path) {
-                    document.getElementById(targetId).value = data.path;
-                }
-            })
-            .catch(err => console.error("Erro ao selecionar arquivo:", err));
+            openExplorer('file', type, targetId);
         }
 
         function selectFolder(targetId) {
-            fetch('/api/select-folder', {
-                method: 'POST'
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.path) {
-                    document.getElementById(targetId).value = data.path;
-                }
-            })
-            .catch(err => console.error("Erro ao selecionar pasta:", err));
+            openExplorer('folder', 'all', targetId);
         }
+
+        function openExplorer(mode, fileType, targetInputId) {
+            explorerState.mode = mode;
+            explorerState.fileType = fileType;
+            explorerState.targetInputId = targetInputId;
+            explorerState.selectedItem = null;
+
+            const titleEl = document.getElementById('explorerTitle');
+            titleEl.textContent = mode === 'folder' ? 'Selecionar Pasta' : 'Selecionar Arquivo';
+
+            const currentVal = document.getElementById(targetInputId).value.trim();
+            document.getElementById('explorerModal').style.display = 'flex';
+            loadDirectory(currentVal);
+        }
+
+        function closeExplorer() {
+            document.getElementById('explorerModal').style.display = 'none';
+        }
+
+        function loadDirectory(path) {
+            fetch('/api/list-directory', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: path,
+                    show_files: explorerState.mode === 'file',
+                    file_type: explorerState.fileType
+                })
+            })
+            .then(res => {
+                if (!res.ok) throw new Error("Erro ao carregar diretório");
+                return res.json();
+            })
+            .then(data => {
+                explorerState.currentPath = data.current_path;
+                explorerState.parentPath = data.parent_path;
+                
+                document.getElementById('explorerPathInput').value = data.current_path;
+                
+                renderShortcuts(data.shortcuts);
+                renderDrives(data.drives);
+                renderDirectoryContents(data.folders, data.files);
+            })
+            .catch(err => {
+                console.error(err);
+                if (path !== '') {
+                    loadDirectory('');
+                }
+            });
+        }
+
+        function renderShortcuts(shortcuts) {
+            const listEl = document.getElementById('explorerShortcuts');
+            listEl.innerHTML = '';
+            for (const [name, path] of Object.entries(shortcuts)) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'sidebar-btn';
+                btn.textContent = name;
+                btn.onclick = () => loadDirectory(path);
+                listEl.appendChild(btn);
+            }
+        }
+
+        function renderDrives(drives) {
+            const listEl = document.getElementById('explorerDrives');
+            listEl.innerHTML = '';
+            drives.forEach(drive => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'sidebar-btn';
+                btn.textContent = `Disco Local (${drive})`;
+                btn.onclick = () => loadDirectory(drive);
+                listEl.appendChild(btn);
+            });
+        }
+
+        function renderDirectoryContents(folders, files) {
+            const listEl = document.getElementById('explorerList');
+            listEl.innerHTML = '';
+            explorerState.selectedItem = null;
+
+            folders.forEach(folder => {
+                const itemEl = document.createElement('div');
+                itemEl.className = 'explorer-item';
+                itemEl.innerHTML = `<span class="explorer-item-icon">📁</span> <span class="explorer-item-name">${folder}</span>`;
+                
+                itemEl.ondblclick = () => {
+                    const nextPath = joinPath(explorerState.currentPath, folder);
+                    loadDirectory(nextPath);
+                };
+                
+                itemEl.onclick = () => {
+                    document.querySelectorAll('.explorer-item').forEach(el => el.classList.remove('selected'));
+                    itemEl.classList.add('selected');
+                    explorerState.selectedItem = {
+                        name: folder,
+                        path: joinPath(explorerState.currentPath, folder),
+                        type: 'folder'
+                    };
+                };
+                listEl.appendChild(itemEl);
+            });
+
+            if (explorerState.mode === 'file') {
+                files.forEach(file => {
+                    const itemEl = document.createElement('div');
+                    itemEl.className = 'explorer-item';
+                    itemEl.innerHTML = `<span class="explorer-item-icon">📄</span> <span class="explorer-item-name">${file}</span>`;
+                    
+                    itemEl.onclick = () => {
+                        document.querySelectorAll('.explorer-item').forEach(el => el.classList.remove('selected'));
+                        itemEl.classList.add('selected');
+                        explorerState.selectedItem = {
+                            name: file,
+                            path: joinPath(explorerState.currentPath, file),
+                            type: 'file'
+                        };
+                    };
+                    
+                    itemEl.ondblclick = () => {
+                        explorerState.selectedItem = {
+                            name: file,
+                            path: joinPath(explorerState.currentPath, file),
+                            type: 'file'
+                        };
+                        confirmSelection();
+                    };
+                    listEl.appendChild(itemEl);
+                });
+            }
+        }
+
+        function joinPath(base, segment) {
+            const separator = base.endsWith('\\') || base.endsWith('/') ? '' : '\\';
+            return base + separator + segment;
+        }
+
+        function navigateUp() {
+            if (explorerState.parentPath) {
+                loadDirectory(explorerState.parentPath);
+            }
+        }
+
+        function handlePathKeyPress(event) {
+            if (event.key === 'Enter') {
+                loadDirectory(event.target.value);
+            }
+        }
+
+        function confirmSelection() {
+            let finalPath = '';
+            if (explorerState.mode === 'folder') {
+                if (explorerState.selectedItem && explorerState.selectedItem.type === 'folder') {
+                    finalPath = explorerState.selectedItem.path;
+                } else {
+                    finalPath = explorerState.currentPath;
+                }
+            } else {
+                if (explorerState.selectedItem && explorerState.selectedItem.type === 'file') {
+                    finalPath = explorerState.selectedItem.path;
+                } else {
+                    alert('Por favor, selecione um arquivo válido na lista.');
+                    return;
+                }
+            }
+
+            if (finalPath) {
+                document.getElementById(explorerState.targetInputId).value = finalPath;
+                closeExplorer();
+            }
+        }
+
 
         function clearTerminal() {
             document.getElementById('terminalBody').innerHTML = '';
