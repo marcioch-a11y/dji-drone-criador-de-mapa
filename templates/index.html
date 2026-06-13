@@ -649,6 +649,25 @@
                 </div>
             </div>
 
+            <!-- Configurações do WebODM -->
+            <div class="form-group-container" style="border-top: 1px solid var(--border-color); padding-top: 20px; margin-top: 10px; display: flex; flex-direction: column; gap: 20px;">
+                <h3 class="panel-subtitle" style="font-size: 14px; font-weight: 600; color: var(--accent-green);">Opções de Processamento WebODM</h3>
+                <div class="row-grid">
+                    <div class="form-group">
+                        <label for="odmResolution">Resolução do Mapa (cm/pixel)</label>
+                        <input type="number" id="odmResolution" value="4.0" step="1.0" min="1.0">
+                    </div>
+                    <div class="form-group">
+                        <label for="odmQuality">Qualidade de Costura</label>
+                        <select id="odmQuality" style="background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 16px; color: var(--text-main); font-size: 14px; font-family: inherit;">
+                            <option value="low">Baixa (Mais Rápido / Arquivo Leve)</option>
+                            <option value="medium" selected>Média (Equilibrado)</option>
+                            <option value="high">Alta (Máximo Detalhe / Arquivo Pesado)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
             <!-- Botões de Ação -->
             <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 10px;">
                 <button type="button" id="btnGeoref" class="btn" onclick="startGeoreferencing()">
@@ -658,6 +677,7 @@
                     <span>🗺️</span> Processar no WebODM (Gerar Ortofoto e KMZ 2D)
                 </button>
             </div>
+
 
         </div>
 
@@ -1072,9 +1092,10 @@
                 photos: document.getElementById('outDir').value, // Envia a pasta de saída do georref
                 out: document.getElementById('outDir').value + '_webodm', // Salva na pasta adjacente
                 filter: currentMode === 'video' ? 'frame_*.jpg' : 'photo_*.jpg', // Filtra dependendo do modo
-                quality: 'medium',
-                resolution: 4.0
+                quality: document.getElementById('odmQuality').value,
+                resolution: parseFloat(document.getElementById('odmResolution').value) || 4.0
             };
+
 
             fetch('/api/run-webodm', {
                 method: 'POST',
