@@ -37,56 +37,36 @@ def index():
 @app.route('/api/select-file', methods=['POST'])
 def select_file():
     """
-    Abre uma caixa de diálogo nativa para selecionar um arquivo (.mp4 ou .srt).
+    Abre uma caixa de diálogo nativa chamando o script auxiliar select_dialog.py.
     """
-    import tkinter as tk
-    from tkinter import filedialog
-
     data = request.json or {}
-    file_type = data.get('type')
+    file_type = data.get('type', 'all')
 
-    file_types = [("Todos os arquivos", "*.*")]
-    if file_type == 'video':
-        file_types = [("Vídeo DJI MP4", "*.mp4"), ("Todos os arquivos", "*.*")]
-    elif file_type == 'srt':
-        file_types = [("Legenda de Telemetria SRT", "*.srt"), ("Todos os arquivos", "*.*")]
-
+    cmd = [sys.executable, "select_dialog.py", "file", file_type]
     filepath = ""
     try:
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes('-topmost', True)
-        filepath = filedialog.askopenfilename(
-            title="Selecionar Arquivo",
-            filetypes=file_types
-        )
-        root.destroy()
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        filepath = res.stdout.strip()
     except Exception as e:
-        print(f"[Erro tkinter] Ao selecionar arquivo: {e}")
+        print(f"[Erro subprocess] Ao selecionar arquivo: {e}")
 
     return jsonify({'path': filepath})
 
 @app.route('/api/select-folder', methods=['POST'])
 def select_folder():
     """
-    Abre uma caixa de diálogo nativa para selecionar uma pasta.
+    Abre uma caixa de diálogo nativa chamando o script auxiliar select_dialog.py.
     """
-    import tkinter as tk
-    from tkinter import filedialog
-
+    cmd = [sys.executable, "select_dialog.py", "folder"]
     folderpath = ""
     try:
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes('-topmost', True)
-        folderpath = filedialog.askdirectory(
-            title="Selecionar Pasta"
-        )
-        root.destroy()
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        folderpath = res.stdout.strip()
     except Exception as e:
-        print(f"[Erro tkinter] Ao selecionar pasta: {e}")
+        print(f"[Erro subprocess] Ao selecionar pasta: {e}")
 
     return jsonify({'path': folderpath})
+
 
 
 @app.route('/api/status', methods=['GET'])
