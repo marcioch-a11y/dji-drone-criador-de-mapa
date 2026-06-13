@@ -1,0 +1,24 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+ENV/
+.env
+
+# Projetos de saída e arquivos grandes do drone
+output_images/
+output_images_cropped/
+webodm_results/
+webodm_results_photos/
+*.mp4
+*.srt
+*.m4a
+*.tif
+*.kmz
+
+# Arquivos de teste temporários
+mock_video.mp4
+mock_telemetria.srt

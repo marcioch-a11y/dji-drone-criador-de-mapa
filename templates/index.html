@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Criador de Mapa DJI Neo - Painel de Controle</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0b0f19;
+            --bg-secondary: #161f30;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --glass-bg: rgba(22, 31, 48, 0.5);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #090d16 0%, #111827 100%);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        header {
+            padding: 24px;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(9, 13, 22, 0.8);
+            backdrop-filter: blur(8px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        header h1 span {
+            color: var(--accent-green);
+        }
+
+        .status-badge {
+            font-size: 12px;
+            font-weight: 500;
+            padding: 6px 12px;
+            border-radius: 9999px;
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--accent-green);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-badge::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            display: inline-block;
+            box-shadow: 0 0 8px var(--accent-green);
+        }
+
+        .status-processing {
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--accent-blue);
+            border-color: rgba(59, 130, 246, 0.2);
+        }
+        .status-processing::before {
+            background: var(--accent-blue);
+            box-shadow: 0 0 8px var(--accent-blue);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
+        }
+
+        main {
+            flex: 1;
+            padding: 40px;
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+        }
+
+        @media (max-width: 1024px) {
+            main {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .panel-title {
+            font-size: 18px;
+            font-weight: 600;
+            border-left: 4px solid var(--accent-blue);
+            padding-left: 12px;
+        }
+
+        .mode-selector {
+            display: flex;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            padding: 4px;
+            border: 1px solid var(--border-color);
+        }
+
+        .mode-btn {
+            flex: 1;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            padding: 10px;
+            font-weight: 500;
+            font-size: 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .mode-btn.active {
+            background: var(--accent-blue);
+            color: var(--text-main);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .form-group label {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        .form-group input {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: var(--text-main);
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+        }
+
+        .row-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .checkbox-group input {
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
+        }
+
+        .btn {
+            background: var(--accent-blue);
+            border: none;
+            color: var(--text-main);
+            padding: 14px 24px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn:hover {
+            opacity: 0.95;
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-green {
+            background: var(--accent-green);
+            box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn:disabled {
+            background: #27272a;
+            color: #71717a;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+            opacity: 0.5;
+        }
+
+        .terminal-panel {
+            display: flex;
+            flex-direction: column;
+            background: #05070b;
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .terminal-header {
+            background: #0f131a;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .terminal-header span {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+            font-family: 'Fira Code', monospace;
+        }
+
+        .terminal-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .term-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .term-red { background: #ef4444; }
+        .term-yellow { background: #eab308; }
+        .term-green { background: #22c55e; }
+
+        .terminal-body {
+            flex: 1;
+            background: #05070b;
+            padding: 20px;
+            overflow-y: auto;
+            max-height: 480px;
+            min-height: 400px;
+            font-family: 'Fira Code', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--accent-green);
+            white-space: pre-wrap;
+        }
+
+        .terminal-body .log-error {
+            color: #f87171;
+        }
+
+        .terminal-body .log-warning {
+            color: #fbbf24;
+        }
+
+        .terminal-body .log-info {
+            color: #60a5fa;
+        }
+
+        .clear-btn {
+            background: none;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .clear-btn:hover {
+            color: var(--text-main);
+            background: rgba(255,255,255,0.05);
+        }
+
+        footer {
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border-color);
+            background: rgba(9, 13, 22, 0.4);
+            margin-top: auto;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1><span>🗺️</span> DJI Neo - Criador de Mapa</h1>
+        <div id="statusBadge" class="status-badge">Pronto</div>
+    </header>
+
+    <main>
+        <div class="panel">
+            <h2 class="panel-title">Parâmetros de Entrada</h2>
+            
+            <div class="mode-selector">
+                <button type="button" id="modeVideo" class="mode-btn active" onclick="setMode('video')">Modo Vídeo</button>
+                <button type="button" id="modePhotos" class="mode-btn" onclick="setMode('photos')">Modo Fotos</button>
+            </div>
+
+            <!-- Inputs Dinâmicos Modo Vídeo -->
+            <div id="videoFields" class="form-group-container" style="display: flex; flex-direction: column; gap: 20px;">
+                <div class="form-group">
+                    <label for="videoPath">Caminho do Vídeo (.MP4)</label>
+                    <input type="text" id="videoPath" placeholder="Ex: C:\Users\mkas2\Desktop\talhao\teste\DJI_0008_D.MP4">
+                </div>
+                <div class="form-group">
+                    <label for="videoInterval">Intervalo de Amostragem (segundos)</label>
+                    <input type="number" id="videoInterval" value="1.5" step="0.1" min="0.1">
+                </div>
+            </div>
+
+            <!-- Inputs Dinâmicos Modo Fotos -->
+            <div id="photoFields" class="form-group-container" style="display: none; flex-direction: column; gap: 20px;">
+                <div class="form-group">
+                    <label for="photosDir">Caminho da Pasta de Fotos</label>
+                    <input type="text" id="photosDir" placeholder="Ex: C:\Users\mkas2\Desktop\talhao">
+                </div>
+                <div class="row-grid">
+                    <div class="form-group">
+                        <label for="photoInterval">Intervalo Presumido (segundos)</label>
+                        <input type="number" id="photoInterval" value="2.0" step="0.1" min="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="photoFilter">Filtro de Arquivos (Glob)</label>
+                        <input type="text" id="photoFilter" value="DJI_20260610*.JPG" placeholder="Ex: DJI_*.JPG">
+                    </div>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="matchDatetime" checked>
+                    <label for="matchDatetime">Sincronizar por Data/Hora Absoluta no Nome do Arquivo</label>
+                </div>
+            </div>
+
+            <!-- Inputs Comuns -->
+            <div class="form-group">
+                <label for="srtPath">Caminho da Telemetria (.SRT)</label>
+                <input type="text" id="srtPath" placeholder="Ex: C:\Users\mkas2\Desktop\talhao\teste\DJI_0008_D.SRT">
+            </div>
+
+            <div class="form-group">
+                <label for="outDir">Diretório de Destino das Fotos Georreferenciadas</label>
+                <input type="text" id="outDir" placeholder="Ex: C:\Users\mkas2\Desktop\talhao\teste\output_images">
+            </div>
+
+            <div class="row-grid">
+                <div class="form-group">
+                    <label for="startTime">Corte Inicial (segundos)</label>
+                    <input type="number" id="startTime" value="8.0" step="1" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="endTime">Corte Final (segundos - opcional)</label>
+                    <input type="number" id="endTime" placeholder="Ex: 40">
+                </div>
+            </div>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="forceTime">
+                <label for="forceTime">Forçar Processamento (ignora desalinhamendo de tempo)</label>
+            </div>
+
+            <!-- Botões de Ação -->
+            <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 10px;">
+                <button type="button" id="btnGeoref" class="btn" onclick="startGeoreferencing()">
+                    <span>🛰️</span> Executar Georreferenciamento
+                </button>
+                <button type="button" id="btnWebODM" class="btn btn-green" onclick="startWebODM()">
+                    <span>🗺️</span> Processar no WebODM (Gerar Ortofoto e KMZ 2D)
+                </button>
+            </div>
+        </div>
+
+        <div class="terminal-panel">
+            <div class="terminal-header">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="term-dot term-red"></span>
+                    <span class="term-dot term-yellow"></span>
+                    <span class="term-dot term-green"></span>
+                    <span style="margin-left: 10px;">virtual-console:~</span>
+                </div>
+                <button class="clear-btn" onclick="clearTerminal()">Limpar</button>
+            </div>
+            <div id="terminalBody" class="terminal-body">Painel inicializado. Aguardando execução do pipeline...</div>
+        </div>
+    </main>
+
+    <footer>
+        <p>Desenvolvido de forma autônoma como ferramenta profissional de Geoprocessamento.</p>
+    </footer>
+
+    <script>
+        let currentMode = 'video';
+        let eventSource = null;
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.getElementById('modeVideo').classList.toggle('active', mode === 'video');
+            document.getElementById('modePhotos').classList.toggle('active', mode === 'photos');
+            document.getElementById('videoFields').style.display = mode === 'video' ? 'flex' : 'none';
+            document.getElementById('photoFields').style.display = mode === 'photos' ? 'flex' : 'none';
+            
+            // Sugere caminhos padrão baseado no modo
+            if (mode === 'photos') {
+                document.getElementById('outDir').placeholder = "Ex: C:\\Users\\mkas2\\Desktop\\talhao\\webodm_results_photos";
+            } else {
+                document.getElementById('outDir').placeholder = "Ex: C:\\Users\\mkas2\\Desktop\\talhao\\teste\\output_images";
+            }
+        }
+
+        function clearTerminal() {
+            document.getElementById('terminalBody').innerHTML = '';
+        }
+
+        function appendToTerminal(message, type = 'text') {
+            const term = document.getElementById('terminalBody');
+            
+            // Tratamento de tipos de log
+            let spanClass = '';
+            if (message.includes('[ERRO]') || message.includes('Erro')) spanClass = 'log-error';
+            else if (message.includes('[AVISO]')) spanClass = 'log-warning';
+            else if (message.includes('---') || message.includes('===')) spanClass = 'log-info';
+
+            const line = document.createElement('div');
+            if (spanClass) {
+                line.className = spanClass;
+            }
+            line.textContent = message;
+            term.appendChild(line);
+            
+            // Auto-scroll
+            term.scrollTop = term.scrollHeight;
+        }
+
+        function initLogStream() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            eventSource = new EventSource('/api/logs');
+            eventSource.onmessage = function(event) {
+                appendToTerminal(event.data);
+            };
+            eventSource.onerror = function() {
+                console.log("Conexão SSE perdida, tentando reconectar...");
+            };
+        }
+
+        function updateStatus(isProcessing, statusText = '') {
+            const badge = document.getElementById('statusBadge');
+            const btnGeoref = document.getElementById('btnGeoref');
+            const btnWebODM = document.getElementById('btnWebODM');
+            
+            if (isProcessing) {
+                badge.className = 'status-badge status-processing';
+                badge.textContent = statusText || 'Processando...';
+                btnGeoref.disabled = true;
+                btnWebODM.disabled = true;
+            } else {
+                badge.className = 'status-badge';
+                badge.textContent = 'Pronto';
+                btnGeoref.disabled = false;
+                btnWebODM.disabled = false;
+            }
+        }
+
+        function pollStatus() {
+            fetch('/api/status')
+                .then(res => res.json())
+                .then(data => {
+                    const isProcessing = data.status === 'processing';
+                    updateStatus(isProcessing, isProcessing ? 'Executando' : 'Pronto');
+                    if (isProcessing) {
+                        setTimeout(pollStatus, 2000);
+                    }
+                })
+                .catch(() => {
+                    updateStatus(false);
+                });
+        }
+
+        function startGeoreferencing() {
+            clearTerminal();
+            initLogStream();
+            updateStatus(true, 'Georreferenciando...');
+
+            const payload = {
+                mode: currentMode,
+                srt: document.getElementById('srtPath').value,
+                out: document.getElementById('outDir').value,
+                start: parseFloat(document.getElementById('startTime').value) || 0.0,
+                end: document.getElementById('endTime').value ? parseFloat(document.getElementById('endTime').value) : null,
+                force: document.getElementById('forceTime').checked
+            };
+
+            if (currentMode === 'video') {
+                payload.video = document.getElementById('videoPath').value;
+                payload.interval = parseFloat(document.getElementById('videoInterval').value) || 1.5;
+            } else {
+                payload.photos = document.getElementById('photosDir').value;
+                payload.photo_interval = parseFloat(document.getElementById('photoInterval').value) || 2.0;
+                payload.filter = document.getElementById('photoFilter').value || '*.jpg';
+                payload.match_datetime = document.getElementById('matchDatetime').checked;
+            }
+
+            fetch('/api/run-pipeline', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'started') {
+                    appendToTerminal("Iniciando georreferenciamento...", 'info');
+                    pollStatus();
+                } else {
+                    appendToTerminal("Erro ao iniciar tarefa: " + data.message, 'error');
+                    updateStatus(false);
+                }
+            })
+            .catch(err => {
+                appendToTerminal("Erro de comunicação com o servidor.", 'error');
+                updateStatus(false);
+            });
+        }
+
+        function startWebODM() {
+            clearTerminal();
+            initLogStream();
+            updateStatus(true, 'Rodando WebODM...');
+
+            const payload = {
+                photos: document.getElementById('outDir').value, // Envia a pasta de saída do georref
+                out: document.getElementById('outDir').value + '_webodm', // Salva na pasta adjacente
+                filter: currentMode === 'video' ? 'frame_*.jpg' : 'photo_*.jpg', // Filtra dependendo do modo
+                quality: 'medium',
+                resolution: 4.0
+            };
+
+            fetch('/api/run-webodm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'started') {
+                    appendToTerminal("Iniciando processamento no WebODM...", 'info');
+                    pollStatus();
+                } else {
+                    appendToTerminal("Erro ao iniciar tarefa no WebODM: " + data.message, 'error');
+                    updateStatus(false);
+                }
+            })
+            .catch(err => {
+                appendToTerminal("Erro de comunicação com o servidor.", 'error');
+                updateStatus(false);
+            });
+        }
+
+        // Inicializa o pooling de status na carga inicial para verificar se há alguma tarefa rodando
+        pollStatus();
+    </script>
+</body>
+</html>
