@@ -152,16 +152,21 @@ def run_pipeline():
         end = data.get('end')
         force = data.get('force', False)
 
-        if not srt or not out:
-            return jsonify({'status': 'error', 'message': 'Parâmetros obrigatórios SRT e OUT ausentes.'}), 400
+        if not out:
+            return jsonify({'status': 'error', 'message': 'Caminho de destino (OUT) ausente.'}), 400
+        if mode == 'video' and not srt:
+            return jsonify({'status': 'error', 'message': 'Caminho da telemetria (SRT) é obrigatório no modo vídeo.'}), 400
 
         # Constrói comando CLI para rodar o script main.py
-        cmd = [sys.executable, "-u", "main.py", "--srt", srt, "--out", out, "--start", str(start)]
+        cmd = [sys.executable, "-u", "main.py", "--out", out, "--start", str(start)]
 
+        if srt:
+            cmd += ["--srt", srt]
         if end is not None:
             cmd += ["--end", str(end)]
         if force:
             cmd.append("--force")
+
 
         if mode == 'video':
             video = data.get('video')

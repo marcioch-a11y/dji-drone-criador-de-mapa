@@ -63,7 +63,7 @@ def main():
     # Entrada mutually exclusive (tecnicamente)
     parser.add_argument("--video", help="Caminho do arquivo de vídeo (.MP4) para extrair frames")
     parser.add_argument("--photos", help="Caminho do diretório contendo fotos (.JPG) existentes")
-    parser.add_argument("--srt", required=True, help="Caminho do arquivo de telemetria (.SRT)")
+    parser.add_argument("--srt", required=False, help="Caminho do arquivo de telemetria (.SRT)")
     parser.add_argument("--out", required=True, help="Diretório de saída para os frames/fotos processadas")
     parser.add_argument("--interval", type=float, default=1.5, help="Intervalo de extração de frames do vídeo (segundos). Padrão: 1.5s")
     parser.add_argument("--photo-interval", type=float, default=2.0, help="Intervalo temporal presumido entre fotos no modo sequencial (segundos). Padrão: 2.0s")
@@ -89,8 +89,11 @@ def main():
     if args.photos and not os.path.isdir(args.photos):
         print(f"Erro: O diretório de fotos '{args.photos}' não foi encontrado.", file=sys.stderr)
         sys.exit(1)
-    if not os.path.isfile(args.srt):
+    if args.srt and not os.path.isfile(args.srt):
         print(f"Erro: O arquivo SRT '{args.srt}' não foi encontrado.", file=sys.stderr)
+        sys.exit(1)
+    if args.video and not args.srt:
+        print("Erro: O arquivo SRT (--srt) é obrigatório no modo vídeo para georreferenciamento de frames.", file=sys.stderr)
         sys.exit(1)
 
     # Validações dos limites de tempo informados
@@ -103,19 +106,24 @@ def main():
 
     print("--- INICIANDO PROCESSAMENTO DO PIPELINE ---")
     
-    # 1. Parsear o arquivo SRT
-    print("[1/4] Lendo e parseando arquivo de telemetria .SRT...")
-    try:
-        telemetry = leitor_srt.parse_srt(args.srt)
-        print(f"   -> Sucesso! Encontrados {len(telemetry)} pontos de telemetria GPS válidos.")
-    except Exception as e:
-        print(f"Erro ao analisar o arquivo SRT: {e}", file=sys.stderr)
-        sys.exit(1)
+    telemetry = None
+    if args.srt:
+        # 1. Parsear o arquivo SRT
+        print("[1/4] Lendo e parseando arquivo de telemetria .SRT...")
+        try:
+            telemetry = leitor_srt.parse_srt(args.srt)
+            print(f"   -> Sucesso! Encontrados {len(telemetry)} pontos de telemetria GPS válidos.")
+        except Exception as e:
+            print(f"Erro ao analisar o arquivo SRT: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("[1/4] Nenhum arquivo SRT fornecido. O programa assumirá georreferenciamento nativo EXIF nas fotos.")
 
     # Criar diretório de saída
     os.makedirs(args.out, exist_ok=True)
 
     if args.video:
+
         # --- MODO VÍDEO ---
         # 2. Ler metadados do vídeo
         print("[2/4] Lendo propriedades do arquivo de vídeo...")
@@ -194,49 +202,62 @@ def main():
         print("[3/4] Mapeando e copiando fotos georreferenciadas...")
         frame_count = 0
 
-        # Mapeamento rápido por data/hora se a flag estiver ativa
-        telemetry_by_dt = {}
-        if args.match_datetime:
-            for pt in telemetry:
-                if pt.get('datetime'):
-                    # O formato no SRT pode ter frações de segundo, normaliza para YYYY-MM-DD HH:MM:SS
-                    dt_normalized = pt['datetime'].split(',')[0].split('.')[0].strip()
-                    telemetry_by_dt[dt_normalized] = pt
-
-        for idx, photo_path in enumerate(photo_files):
-            filename = os.path.basename(photo_path)
-            ponto_gps = None
-            t_mapped = None
-
+        # Se não houver telemetria, apenas verifica e copia as fotos com GPS EXIF nativo
+        if not telemetry:
+            for photo_path in photo_files:
+                filename = os.path.basename(photo_path)
+                if injetor_exif.tem_gps(photo_path):
+                    frame_count += 1
+                    out_img_path = os.path.join(args.out, f"photo_{frame_count:04d}_{filename}")
+                    shutil.copy2(photo_path, out_img_path)
+                    print(f"Foto {frame_count} ({filename}) processada - GPS EXIF nativo validado [OK]")
+                else:
+                    print(f"Erro: A foto '{filename}' não possui coordenadas GPS em seus metadados e nenhum arquivo SRT foi fornecido para georreferenciamento.", file=sys.stderr)
+                    sys.exit(1)
+        else:
+            # Mapeamento rápido por data/hora se a flag estiver ativa
+            telemetry_by_dt = {}
             if args.match_datetime:
-                dt_str = parse_filename_datetime(filename)
-                if dt_str:
-                    if dt_str in telemetry_by_dt:
-                        ponto_gps = telemetry_by_dt[dt_str]
-                        t_mapped = ponto_gps['start_time']
+                for pt in telemetry:
+                    if pt.get('datetime'):
+                        # O formato no SRT pode ter frações de segundo, normaliza para YYYY-MM-DD HH:MM:SS
+                        dt_normalized = pt['datetime'].split(',')[0].split('.')[0].strip()
+                        telemetry_by_dt[dt_normalized] = pt
 
-            if not ponto_gps:
-                # Mapeamento sequencial baseado no intervalo temporal
-                t = args.start + idx * args.photo_interval
-                ponto_gps = obter_telemetria_mais_proxima(t, telemetry)
-                t_mapped = t
+            for idx, photo_path in enumerate(photo_files):
+                filename = os.path.basename(photo_path)
+                ponto_gps = None
+                t_mapped = None
 
-            if not ponto_gps:
-                print(f"   [AVISO] Telemetria não encontrada para a foto '{filename}'. Pulando.")
-                continue
+                if args.match_datetime:
+                    dt_str = parse_filename_datetime(filename)
+                    if dt_str:
+                        if dt_str in telemetry_by_dt:
+                            ponto_gps = telemetry_by_dt[dt_str]
+                            t_mapped = ponto_gps['start_time']
 
-            frame_count += 1
-            out_img_path = os.path.join(args.out, f"photo_{frame_count:04d}_{filename}")
-            shutil.copy2(photo_path, out_img_path)
+                if not ponto_gps:
+                    # Mapeamento sequencial baseado no intervalo temporal
+                    t = args.start + idx * args.photo_interval
+                    ponto_gps = obter_telemetria_mais_proxima(t, telemetry)
+                    t_mapped = t
 
-            lat = ponto_gps['latitude']
-            lon = ponto_gps['longitude']
-            alt = ponto_gps['altitude']
+                if not ponto_gps:
+                    print(f"   [AVISO] Telemetria não encontrada para a foto '{filename}'. Pulando.")
+                    continue
 
-            injetor_exif.injetar_gps(out_img_path, lat, lon, alt)
-            
-            dt_log = f" ({ponto_gps.get('datetime')})" if ponto_gps.get('datetime') else ""
-            print(f"Foto {frame_count} ({filename}) processada - Lat: {lat:.6f}, Lon: {lon:.6f}, Alt: {alt:.1f}m (t={t_mapped:.2f}s){dt_log}")
+                frame_count += 1
+                out_img_path = os.path.join(args.out, f"photo_{frame_count:04d}_{filename}")
+                shutil.copy2(photo_path, out_img_path)
+
+                lat = ponto_gps['latitude']
+                lon = ponto_gps['longitude']
+                alt = ponto_gps['altitude']
+
+                injetor_exif.injetar_gps(out_img_path, lat, lon, alt)
+                
+                dt_log = f" ({ponto_gps.get('datetime')})" if ponto_gps.get('datetime') else ""
+                print(f"Foto {frame_count} ({filename}) processada - Lat: {lat:.6f}, Lon: {lon:.6f}, Alt: {alt:.1f}m (t={t_mapped:.2f}s){dt_log}")
 
     print("\n--- PIPELINE CONCLUÍDO COM SUCESSO ---")
     print(f"Total de fotos georreferenciadas geradas: {frame_count}")

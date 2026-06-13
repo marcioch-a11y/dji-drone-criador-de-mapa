@@ -92,3 +92,15 @@ def injetar_gps(img_path, lat, lon, alt):
     # Serializa e injeta de volta na imagem
     exif_bytes = piexif.dump(exif_dict)
     piexif.insert(exif_bytes, img_path)
+
+def tem_gps(img_path):
+    """
+    Verifica se a imagem já possui coordenadas GPS válidas inseridas no EXIF.
+    """
+    try:
+        exif_dict = piexif.load(img_path)
+        gps = exif_dict.get("GPS", {})
+        return (piexif.GPSIFD.GPSLatitude in gps) and (piexif.GPSIFD.GPSLongitude in gps)
+    except Exception:
+        return False
+
