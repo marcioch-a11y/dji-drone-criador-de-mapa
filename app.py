@@ -392,6 +392,45 @@ def queue_clear():
         project_queue = [j for j in project_queue if j.get('status') == 'running']
     return jsonify({'status': 'success'})
 
+@app.route('/api/stop', methods=['POST'])
+def stop_all():
+    """
+    Interrompe imediatamente qualquer processo ativo (georreferenciamento ou WebODM),
+    remove containers Docker temporários e cancela a execução da fila.
+    """
+    global active_process, current_job, log_messages
+    log_messages.append("\n[INTERRUPÇÃO] Solicitado cancelamento forçado pelo usuário...")
+    
+    # 1. Mata processo Python ativo se houver
+    with process_lock:
+        if active_process is not None and hasattr(active_process, 'poll'):
+            try:
+                active_process.terminate()
+                time.sleep(0.5)
+                if active_process.poll() is None:
+                    active_process.kill()
+                log_messages.append("[INTERRUPÇÃO] Processo de execução finalizado.")
+            except Exception as e:
+                log_messages.append(f"[INTERRUPÇÃO Aviso]: {e}")
+        active_process = None
+
+    # 2. Desliga container Docker do NodeODM se estiver rodando
+    try:
+        subprocess.run(["docker", "rm", "-f", "temp-nodeodm"], capture_output=True)
+        log_messages.append("[INTERRUPÇÃO] Container Docker finalizado e liberado.")
+    except Exception:
+        pass
+
+    # 3. Atualiza status do job atual e fila
+    with queue_lock:
+        if current_job:
+            current_job['status'] = 'canceled'
+            log_messages.append(f"[INTERRUPÇÃO] Projeto '{current_job.get('name')}' marcado como cancelado.")
+            current_job = None
+
+    log_messages.append("--- TUDO INTERROMPIDO COM SUCESSO ---")
+    return jsonify({'status': 'success', 'message': 'Processamento cancelado com sucesso.'})
+
 
 @app.route('/api/status', methods=['GET'])
 def status():

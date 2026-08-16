@@ -677,7 +677,12 @@
 <body>
     <header>
         <h1><span>🗺️</span> DJI Neo - Criador de Mapa</h1>
-        <div id="statusBadge" class="status-badge">Pronto</div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <button type="button" id="btnStopGlobal" class="btn" style="display: none; background: #ef4444; padding: 6px 14px; font-size: 12px; box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);" onclick="stopAllProcessing()">
+                🛑 Parar Tudo
+            </button>
+            <div id="statusBadge" class="status-badge">Pronto</div>
+        </div>
     </header>
 
     <main>
@@ -836,7 +841,9 @@
                     <button type="button" id="btnWebODM" class="btn btn-green" onclick="startWebODM()">
                         <span>🗺️</span> Apenas WebODM
                     </button>
-                </div>
+                <button type="button" id="btnStopAction" class="btn" style="display: none; background: #ef4444; box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);" onclick="stopAllProcessing()">
+                    <span>🛑</span> Parar Tudo Imediatamente
+                </button>
                 <a href="/viewer-3d" target="_blank" class="btn" style="background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%); display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; color: white; margin-top: 2px; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);">
                     <span>📐</span> Visualizador 3D (GLB)
                 </a>
@@ -1529,17 +1536,42 @@
             const btnGeoref = document.getElementById('btnGeoref');
             const btnWebODM = document.getElementById('btnWebODM');
             
+            const btnStopGlobal = document.getElementById('btnStopGlobal');
+            const btnStopAction = document.getElementById('btnStopAction');
+            
             if (isProcessing) {
                 badge.className = 'status-badge status-processing';
                 badge.textContent = statusText || 'Processando...';
                 btnGeoref.disabled = true;
                 btnWebODM.disabled = true;
+                if (btnStopGlobal) btnStopGlobal.style.display = 'inline-flex';
+                if (btnStopAction) btnStopAction.style.display = 'flex';
             } else {
                 badge.className = 'status-badge';
                 badge.textContent = 'Pronto';
                 btnGeoref.disabled = false;
                 btnWebODM.disabled = false;
+                if (btnStopGlobal) btnStopGlobal.style.display = 'none';
+                if (btnStopAction) btnStopAction.style.display = 'none';
             }
+        }
+
+        function stopAllProcessing() {
+            if (!confirm("Deseja realmente parar todo o processamento e cancelar a fila atual?")) {
+                return;
+            }
+            
+            appendToTerminal("🛑 Solicitando cancelamento ao servidor...", 'warning');
+            fetch('/api/stop', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    appendToTerminal("🛑 " + data.message, 'warning');
+                    updateStatus(false);
+                    fetchQueueList();
+                })
+                .catch(err => {
+                    appendToTerminal("Erro ao enviar comando de parada.", 'error');
+                });
         }
 
         function pollStatus() {
