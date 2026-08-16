@@ -12,6 +12,186 @@ active_process = None
 log_messages = []
 process_lock = threading.Lock()
 
+# Sistema de Fila de Projetos (Batch / Lista de Espera Noturna)
+project_queue = []
+queue_lock = threading.Lock()
+current_job = None
+queue_worker_thread = None
+
+def run_project_job(job):
+    """
+    Executa um projeto completo da fila:
+    Passo 1: Georreferenciamento (main.py)
+    Passo 2 (opcional): Processamento WebODM / Orquestrador Docker (processar_webodm.py)
+    """
+    global active_process, log_messages, current_job
+    job_id = job.get('id')
+    job_name = job.get('name', 'Projeto')
+    
+    with queue_lock:
+        job['status'] = 'running'
+        current_job = job
+
+    log_messages.append(f"\n=======================================================")
+    log_messages.append(f"[Fila de Projetos] INICIANDO: {job_name}")
+    log_messages.append(f"=======================================================")
+
+    mode = job.get('mode', 'video')
+    srt = job.get('srt')
+    out = job.get('out')
+    start = job.get('start', 0.0)
+    end = job.get('end')
+    force = job.get('force', False)
+    auto_map = job.get('auto_map', True)
+    mesh_3d = job.get('mesh_3d', False)
+    quality = job.get('quality', 'medium')
+    resolution = job.get('resolution', 4.0)
+    kmz_name = job.get('kmz_name', '')
+
+    # --- PASSO 1: Georreferenciamento ---
+    cmd_geo = [sys.executable, "-u", "main.py", "--out", out, "--start", str(start)]
+    if srt:
+        cmd_geo += ["--srt", srt]
+    if end is not None:
+        cmd_geo += ["--end", str(end)]
+    if force:
+        cmd_geo.append("--force")
+
+    if mode == 'video':
+        video = job.get('video')
+        interval = job.get('interval', 1.5)
+        cmd_geo += ["--video", video, "--interval", str(interval)]
+    else:
+        photos = job.get('photos')
+        photo_interval = job.get('photo_interval', 2.0)
+        filt = job.get('filter', '*.jpg')
+        cmd_geo += ["--photos", photos, "--photo-interval", str(photo_interval), "--filter", filt]
+        if job.get('match_datetime', False):
+            cmd_geo.append("--match-datetime")
+
+    log_messages.append(f"[Fila: Passo 1] Extraindo e georreferenciando fotos...")
+    try:
+        with process_lock:
+            active_process = subprocess.Popen(
+                cmd_geo,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+        
+        for line in iter(active_process.stdout.readline, ''):
+            if line:
+                log_messages.append(line.strip())
+        active_process.wait()
+        geo_ret = active_process.returncode
+    except Exception as e:
+        log_messages.append(f"[ERRO no Georreferenciamento]: {e}")
+        geo_ret = -1
+    finally:
+        with process_lock:
+            active_process = None
+
+    if geo_ret != 0:
+        log_messages.append(f"[Fila AVISO] Georreferenciamento finalizou com código {geo_ret}. Abortando mapa para este projeto.")
+        with queue_lock:
+            job['status'] = 'failed'
+            current_job = None
+        return
+
+    log_messages.append(f"[Fila: Passo 1 Concluído] Fotos salvas com sucesso em: {out}")
+
+    # Se auto_map não estiver ativado, conclui aqui
+    if not auto_map:
+        log_messages.append(f"[Fila] Projeto {job_name} concluído (Criação de Mapa WebODM estava desativada).")
+        with queue_lock:
+            job['status'] = 'completed'
+            current_job = None
+        return
+
+    # --- PASSO 2: WebODM Automático ---
+    log_messages.append(f"\n[Fila: Passo 2] Iniciando geração do Mapa WebODM (3D: {'SIM' if mesh_3d else 'NÃO'})...")
+    try:
+        with process_lock:
+            active_process = "webodm_flow"
+
+        # Sobe o container Docker do NodeODM
+        subprocess.run(["docker", "run", "-d", "--name", "temp-nodeodm", "-p", "3000:3000", "webodm/nodeodm:stable"], capture_output=True)
+        time.sleep(4)
+
+        odm_out = out + "_webodm"
+        odm_filter = 'frame_*.jpg' if mode == 'video' else 'photo_*.jpg'
+
+        cmd_odm = [
+            sys.executable, "-u", "processar_webodm.py",
+            "--photos", out,
+            "--out", odm_out,
+            "--filter", odm_filter,
+            "--quality", quality,
+            "--resolution", str(resolution)
+        ]
+        if kmz_name:
+            cmd_odm += ["--kmz-name", kmz_name]
+        if mesh_3d:
+            cmd_odm.append("--mesh-3d")
+
+        with process_lock:
+            active_process = subprocess.Popen(
+                cmd_odm,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+
+        for line in iter(active_process.stdout.readline, ''):
+            if line:
+                log_messages.append(line.strip())
+        active_process.wait()
+        odm_ret = active_process.returncode
+
+        if odm_ret == 0:
+            log_messages.append(f"[Fila SUCESSO] Projeto {job_name} finalizado com êxito total!")
+            with queue_lock:
+                job['status'] = 'completed'
+        else:
+            log_messages.append(f"[Fila ERRO] WebODM finalizou com falha (código {odm_ret}).")
+            with queue_lock:
+                job['status'] = 'failed'
+
+    except Exception as e:
+        log_messages.append(f"[Fila ERRO WebODM]: {e}")
+        with queue_lock:
+            job['status'] = 'failed'
+    finally:
+        subprocess.run(["docker", "rm", "-f", "temp-nodeodm"], capture_output=True)
+        with process_lock:
+            active_process = None
+        with queue_lock:
+            current_job = None
+
+def queue_worker_loop():
+    """
+    Loop em background que processa jobs da fila sequencialmente.
+    """
+    while True:
+        job_to_run = None
+        with queue_lock:
+            for job in project_queue:
+                if job.get('status') == 'pending':
+                    job_to_run = job
+                    break
+        
+        if job_to_run:
+            run_project_job(job_to_run)
+        else:
+            time.sleep(1.0)
+
+# Inicia thread permanente da fila
+queue_worker_thread = threading.Thread(target=queue_worker_loop, daemon=True)
+queue_worker_thread.start()
+
+
 def read_process_output(proc):
     """
     Thread que consome a saída padrão de um processo em tempo real e a direciona para a fila de logs.
@@ -131,16 +311,106 @@ def video_info():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+@app.route('/api/queue/add', methods=['POST'])
+def queue_add():
+    """
+    Adiciona um novo projeto à lista de espera.
+    """
+    data = request.json or {}
+    import uuid
+    job_id = str(uuid.uuid4())[:8]
+    
+    # Define um nome amigável para o projeto
+    mode = data.get('mode', 'video')
+    if mode == 'video':
+        src_name = os.path.basename(data.get('video', 'Video'))
+    else:
+        src_name = os.path.basename(data.get('photos', 'Fotos'))
+    
+    out_name = os.path.basename(data.get('out', 'Destino'))
+    job_name = f"[{mode.upper()}] {src_name} ➔ {out_name}"
+
+    job = {
+        'id': job_id,
+        'name': job_name,
+        'status': 'pending', # pending, running, completed, failed
+        'created_at': time.strftime('%H:%M:%S'),
+        'mode': mode,
+        'video': data.get('video'),
+        'srt': data.get('srt'),
+        'photos': data.get('photos'),
+        'out': data.get('out'),
+        'interval': float(data.get('interval', 1.5)),
+        'photo_interval': float(data.get('photo_interval', 2.0)),
+        'filter': data.get('filter', '*.jpg'),
+        'start': float(data.get('start', 0.0)),
+        'end': float(data['end']) if data.get('end') is not None and str(data.get('end')).strip() != '' else None,
+        'force': bool(data.get('force', False)),
+        'match_datetime': bool(data.get('match_datetime', False)),
+        'auto_map': bool(data.get('auto_map', True)),
+        'mesh_3d': bool(data.get('mesh_3d', False)),
+        'quality': data.get('quality', 'medium'),
+        'resolution': float(data.get('resolution', 4.0)),
+        'kmz_name': data.get('kmz_name', '')
+    }
+
+    with queue_lock:
+        project_queue.append(job)
+
+    return jsonify({'status': 'success', 'job': job})
+
+@app.route('/api/queue/list', methods=['GET'])
+def queue_list():
+    """
+    Lista todos os projetos na fila.
+    """
+    with queue_lock:
+        return jsonify({
+            'queue': list(project_queue),
+            'current_job': current_job
+        })
+
+@app.route('/api/queue/remove', methods=['POST'])
+def queue_remove():
+    """
+    Remove um projeto pendente da fila.
+    """
+    data = request.json or {}
+    job_id = data.get('id')
+    with queue_lock:
+        global project_queue
+        project_queue = [j for j in project_queue if j.get('id') != job_id or j.get('status') == 'running']
+    return jsonify({'status': 'success'})
+
+@app.route('/api/queue/clear', methods=['POST'])
+def queue_clear():
+    """
+    Limpa todos os projetos concluídos ou pendentes que não estejam rodando.
+    """
+    with queue_lock:
+        global project_queue
+        project_queue = [j for j in project_queue if j.get('status') == 'running']
+    return jsonify({'status': 'success'})
+
+
 @app.route('/api/status', methods=['GET'])
 def status():
     """
-    Retorna o status de execução atual.
+    Retorna o status de execução atual e itens pendentes na fila.
     """
-    global active_process
+    global active_process, current_job
     with process_lock:
-        if active_process is not None:
-            return jsonify({'status': 'processing'})
-        return jsonify({'status': 'idle'})
+        is_proc = active_process is not None
+    
+    with queue_lock:
+        pending_count = sum(1 for j in project_queue if j.get('status') == 'pending')
+        curr = current_job.get('name') if current_job else None
+
+    return jsonify({
+        'status': 'processing' if (is_proc or current_job) else 'idle',
+        'current_job': curr,
+        'pending_count': pending_count
+    })
 
 @app.route('/api/logs', methods=['GET'])
 def logs():

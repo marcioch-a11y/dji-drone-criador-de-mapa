@@ -237,6 +237,124 @@
             height: 16px;
         }
 
+        .switch-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 12px 16px;
+        }
+
+        .switch-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .switch-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .switch-desc {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* Toggle Switch UI */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 46px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #334155;
+            transition: .3s ease;
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s ease;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--accent-green);
+        }
+
+        input:checked + .slider.slider-blue {
+            background-color: var(--accent-blue);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(22px);
+        }
+
+        /* Fila de Projetos */
+        .queue-item {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+        }
+
+        .queue-item.running {
+            border-color: var(--accent-blue);
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .queue-item.completed {
+            border-color: var(--accent-green);
+            background: rgba(16, 185, 129, 0.05);
+        }
+
+        .queue-item.failed {
+            border-color: #ef4444;
+            background: rgba(239, 68, 68, 0.05);
+        }
+
+        .badge-status {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 3px 8px;
+            border-radius: 999px;
+        }
+        .badge-pending { background: #334155; color: #94a3b8; }
+        .badge-running { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; }
+        .badge-completed { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #10b981; }
+        .badge-failed { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid #ef4444; }
+
         .btn {
             background: var(--accent-blue);
             border: none;
@@ -677,16 +795,50 @@
                 </div>
             </div>
 
-            <!-- Botões de Ação -->
-            <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 10px;">
-                <button type="button" id="btnGeoref" class="btn" onclick="startGeoreferencing()">
-                    <span>🛰️</span> Executar Georreferenciamento
+            <!-- Automação e Encadeamento Contínuo -->
+            <div class="form-group-container" style="border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 6px; display: flex; flex-direction: column; gap: 12px;">
+                <h3 class="panel-subtitle" style="font-size: 14px; font-weight: 600; color: var(--accent-blue);">Automação de Encadeamento Noturno</h3>
+                
+                <!-- Switch 1: Auto Criar Mapa (Ligado por padrão) -->
+                <div class="switch-container">
+                    <div class="switch-info">
+                        <span class="switch-title">🗺️ Iniciar Criação do Mapa Automaticamente</span>
+                        <span class="switch-desc">Após georreferenciar as fotos, inicia imediatamente o WebODM / KMZ.</span>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="switchAutoMap" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <!-- Switch 2: Auto Gerar 3D (Desligado por padrão) -->
+                <div class="switch-container">
+                    <div class="switch-info">
+                        <span class="switch-title">📐 Gerar Modelo 3D Texturizado (GLB / OBJ)</span>
+                        <span class="switch-desc">Reconstrói malha tridimensional (mais demorado). Desligado = 2D super rápido.</span>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="switchMesh3D">
+                        <span class="slider slider-blue"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Botões de Ação e Fila -->
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 12px;">
+                <button type="button" id="btnAddToQueue" class="btn" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); box-shadow: 0 4px 14px rgba(245, 158, 11, 0.3);" onclick="addProjectToQueue()">
+                    <span>⏳</span> Adicionar à Lista de Espera (Processamento Noturno)
                 </button>
-                <button type="button" id="btnWebODM" class="btn btn-green" onclick="startWebODM()">
-                    <span>🗺️</span> Processar no WebODM (Gerar Ortofoto e KMZ 2D)
-                </button>
-                <a href="/viewer-3d" target="_blank" class="btn" style="background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%); display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; color: white; margin-top: 4px; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);">
-                    <span>📐</span> Visualizar Modelo 3D (GLB)
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <button type="button" id="btnGeoref" class="btn" onclick="startGeoreferencing()">
+                        <span>🛰️</span> Apenas Georreferenciar
+                    </button>
+                    <button type="button" id="btnWebODM" class="btn btn-green" onclick="startWebODM()">
+                        <span>🗺️</span> Apenas WebODM
+                    </button>
+                </div>
+                <a href="/viewer-3d" target="_blank" class="btn" style="background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%); display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; color: white; margin-top: 2px; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);">
+                    <span>📐</span> Visualizador 3D (GLB)
                 </a>
             </div>
 
@@ -795,17 +947,36 @@
     </div>
 
 
-        <div class="terminal-panel">
-            <div class="terminal-header">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <span class="term-dot term-red"></span>
-                    <span class="term-dot term-yellow"></span>
-                    <span class="term-dot term-green"></span>
-                    <span style="margin-left: 10px;">virtual-console:~</span>
+        <div style="display: flex; flex-direction: column; gap: 24px; min-width: 0;">
+            <!-- Painel da Fila de Espera Noturna -->
+            <div class="panel" style="padding: 24px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h2 class="panel-title" style="border-left-color: #f59e0b; font-size: 16px;">
+                        <span>⏳</span> Lista de Espera Noturna (<span id="queueCount">0</span>)
+                    </h2>
+                    <button class="clear-btn" style="color: #f87171; border-color: rgba(239, 68, 68, 0.3);" onclick="clearFinishedQueue()">Limpar Concluídos</button>
                 </div>
-                <button class="clear-btn" onclick="clearTerminal()">Limpar</button>
+                <p style="font-size: 12px; color: var(--text-muted); margin-top: -12px;">
+                    Enfileire quantos vídeos/pastas desejar. O sistema processará um por um automaticamente a noite toda.
+                </p>
+                <div id="queueListContainer" style="display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto; padding-right: 4px;">
+                    <div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 16px;">Nenhum projeto na fila no momento.</div>
+                </div>
             </div>
-            <div id="terminalBody" class="terminal-body">Painel inicializado. Aguardando execução do pipeline...</div>
+
+            <!-- Terminal / Console de Logs -->
+            <div class="terminal-panel" style="flex: 1;">
+                <div class="terminal-header">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="term-dot term-red"></span>
+                        <span class="term-dot term-yellow"></span>
+                        <span class="term-dot term-green"></span>
+                        <span style="margin-left: 10px;">virtual-console:~</span>
+                    </div>
+                    <button class="clear-btn" onclick="clearTerminal()">Limpar</button>
+                </div>
+                <div id="terminalBody" class="terminal-body" style="min-height: 300px;">Painel inicializado. Aguardando execução do pipeline...</div>
+            </div>
         </div>
     </main>
 
@@ -1071,6 +1242,13 @@
             if (finalPath) {
                 document.getElementById(explorerState.targetInputId).value = finalPath;
                 
+                // Salva na memória do navegador a pasta do arquivo selecionado
+                const parentDir = explorerState.selectedItem && explorerState.selectedItem.type === 'file' 
+                    ? explorerState.currentPath 
+                    : finalPath;
+                localStorage.setItem('dji_last_visited_dir', parentDir);
+                localStorage.setItem(`dji_last_${explorerState.targetInputId}`, finalPath);
+
                 // Se foi selecionado um vídeo, dispara o auto-carregamento do SRT e a duração do vídeo
                 if (explorerState.targetInputId === 'videoPath') {
                     onVideoPathChanged(finalPath);
@@ -1080,6 +1258,25 @@
             }
         }
 
+        function openExplorer(mode, fileType, targetInputId) {
+            explorerState.mode = mode;
+            explorerState.fileType = fileType;
+            explorerState.targetInputId = targetInputId;
+            explorerState.selectedItem = null;
+
+            const titleEl = document.getElementById('explorerTitle');
+            titleEl.textContent = mode === 'folder' ? 'Selecionar Pasta' : 'Selecionar Arquivo';
+
+            let currentVal = document.getElementById(targetInputId).value.trim();
+            // Se o campo estiver vazio, recupera a última pasta navegada da memória
+            if (!currentVal) {
+                currentVal = localStorage.getItem('dji_last_visited_dir') || '';
+            }
+
+            document.getElementById('explorerModal').style.display = 'flex';
+            loadDirectory(currentVal);
+        }
+
         let videoInfoTimeout = null;
         function onVideoPathChanged(videoPath) {
             videoPath = (videoPath || '').trim();
@@ -1087,6 +1284,8 @@
                 document.getElementById('videoDurationBadge').style.display = 'none';
                 return;
             }
+            
+            localStorage.setItem('dji_last_videoPath', videoPath);
 
             // 1. Auto-carrega o caminho do SRT correspondente (mesmo nome e pasta com .SRT ou .srt)
             autoLoadSrtFromVideo(videoPath);
@@ -1102,9 +1301,9 @@
             const lastDot = videoPath.lastIndexOf('.');
             if (lastDot !== -1) {
                 const srtPath = videoPath.substring(0, lastDot) + '.SRT';
-                // Define no campo de telemetria SRT caso ainda não esteja preenchido manualmente com outro arquivo
                 const srtInput = document.getElementById('srtPath');
                 srtInput.value = srtPath;
+                localStorage.setItem('dji_last_srtPath', srtPath);
 
                 // Sugere automaticamente o nome do KMZ com base no nome do arquivo do vídeo
                 const baseNameWithExt = videoPath.split(/[\\/]/).pop();
@@ -1112,6 +1311,15 @@
                 const kmzInput = document.getElementById('kmzCustomName');
                 if (kmzInput) {
                     kmzInput.value = `${baseName}_mapa.kmz`;
+                }
+
+                // Sugere pasta de saída se estiver vazia
+                const outInput = document.getElementById('outDir');
+                if (!outInput.value) {
+                    const videoDir = videoPath.substring(0, videoPath.lastIndexOf('\\') !== -1 ? videoPath.lastIndexOf('\\') : videoPath.lastIndexOf('/'));
+                    if (videoDir) {
+                        outInput.value = `${videoDir}\\fotos_georref`;
+                    }
                 }
             }
         }
@@ -1139,6 +1347,143 @@
                 badge.style.display = 'none';
             });
         }
+
+        /* Gestão da Fila de Projetos (Processamento Noturno) */
+        function getProjectPayload() {
+            const isVideo = currentMode === 'video';
+            const startTime = isVideo 
+                ? (parseFloat(document.getElementById('startTimeVideo').value) || 0.0)
+                : (document.getElementById('matchDatetime').checked ? 0.0 : (parseFloat(document.getElementById('startTimePhoto').value) || 0.0));
+
+            return {
+                mode: currentMode,
+                video: document.getElementById('videoPath').value.trim(),
+                photos: document.getElementById('photosDir').value.trim(),
+                srt: document.getElementById('srtPath').value.trim(),
+                out: document.getElementById('outDir').value.trim(),
+                interval: parseFloat(document.getElementById('videoInterval').value) || 1.5,
+                photo_interval: parseFloat(document.getElementById('photoInterval').value) || 2.0,
+                filter: document.getElementById('photoFilter').value || '*.jpg',
+                start: startTime,
+                end: isVideo && document.getElementById('endTime').value ? parseFloat(document.getElementById('endTime').value) : null,
+                force: isVideo ? document.getElementById('forceTime').checked : false,
+                match_datetime: document.getElementById('matchDatetime').checked,
+                auto_map: document.getElementById('switchAutoMap').checked,
+                mesh_3d: document.getElementById('switchMesh3D').checked,
+                quality: document.getElementById('odmQuality').value,
+                resolution: parseFloat(document.getElementById('odmResolution').value) || 4.0,
+                kmz_name: (document.getElementById('kmzCustomName')?.value || '').trim()
+            };
+        }
+
+        function addProjectToQueue() {
+            const payload = getProjectPayload();
+            if (payload.mode === 'video' && (!payload.video || !payload.srt)) {
+                alert('Preencha pelo menos o caminho do Vídeo (.MP4) e a Telemetria (.SRT).');
+                return;
+            }
+            if (payload.mode === 'photos' && !payload.photos) {
+                alert('Preencha a pasta das fotos.');
+                return;
+            }
+            if (!payload.out) {
+                alert('Preencha o Diretório de Destino.');
+                return;
+            }
+
+            fetch('/api/queue/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    initLogStream();
+                    appendToTerminal(`[Fila]: Projeto "${data.job.name}" adicionado à lista de espera! (Auto-Mapa: ${payload.auto_map ? 'Sim' : 'Não'} | 3D: ${payload.mesh_3d ? 'Sim' : 'Não'})`, 'info');
+                    fetchQueueList();
+                }
+            });
+        }
+
+        function fetchQueueList() {
+            fetch('/api/queue/list')
+                .then(res => res.json())
+                .then(data => {
+                    renderQueueUI(data.queue, data.current_job);
+                });
+        }
+
+        function renderQueueUI(queue, currentJob) {
+            const container = document.getElementById('queueListContainer');
+            const countSpan = document.getElementById('queueCount');
+            countSpan.textContent = queue.length;
+
+            if (!queue || queue.length === 0) {
+                container.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 16px;">Nenhum projeto na fila. Adicione quantos desejar!</div>`;
+                return;
+            }
+
+            container.innerHTML = '';
+            queue.forEach((job, idx) => {
+                const item = document.createElement('div');
+                item.className = `queue-item ${job.status}`;
+                
+                let statusLabel = 'Pendente';
+                let statusClass = 'badge-pending';
+                if (job.status === 'running') {
+                    statusLabel = 'Processando...';
+                    statusClass = 'badge-running';
+                } else if (job.status === 'completed') {
+                    statusLabel = 'Concluído';
+                    statusClass = 'badge-completed';
+                } else if (job.status === 'failed') {
+                    statusLabel = 'Falhou';
+                    statusClass = 'badge-failed';
+                }
+
+                item.innerHTML = `
+                    <div style="display:flex; flex-direction:column; gap:2px; min-width:0;">
+                        <span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${job.name}</span>
+                        <span style="font-size:11px; color:var(--text-muted);">
+                            ${job.created_at} | Mapa: ${job.auto_map ? '✅' : '❌'} | 3D: ${job.mesh_3d ? '✅' : '❌'}
+                        </span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span class="badge-status ${statusClass}">${statusLabel}</span>
+                        ${job.status === 'pending' ? `<button onclick="removeQueueItem('${job.id}')" style="background:none; border:none; color:#f87171; cursor:pointer; font-size:14px;" title="Remover">&times;</button>` : ''}
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function removeQueueItem(id) {
+            fetch('/api/queue/remove', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id })
+            }).then(() => fetchQueueList());
+        }
+
+        function clearFinishedQueue() {
+            fetch('/api/queue/clear', { method: 'POST' }).then(() => fetchQueueList());
+        }
+
+        // Restaura campos salvos da memória ao abrir a página
+        window.addEventListener('DOMContentLoaded', () => {
+            ['videoPath', 'srtPath', 'photosDir', 'outDir'].forEach(id => {
+                const saved = localStorage.getItem(`dji_last_${id}`);
+                const el = document.getElementById(id);
+                if (saved && el && !el.value) {
+                    el.value = saved;
+                    if (id === 'videoPath') {
+                        onVideoPathChanged(saved);
+                    }
+                }
+            });
+            fetchQueueList();
+        });
 
 
         function clearTerminal() {
@@ -1202,13 +1547,17 @@
                 .then(res => res.json())
                 .then(data => {
                     const isProcessing = data.status === 'processing';
-                    updateStatus(isProcessing, isProcessing ? 'Executando' : 'Pronto');
+                    let label = 'Pronto';
                     if (isProcessing) {
-                        setTimeout(pollStatus, 2000);
+                        label = data.current_job ? `Rodando: ${data.current_job}` : 'Executando...';
                     }
+                    updateStatus(isProcessing, label);
+                    fetchQueueList();
+                    setTimeout(pollStatus, 2500);
                 })
                 .catch(() => {
                     updateStatus(false);
+                    setTimeout(pollStatus, 4000);
                 });
         }
 

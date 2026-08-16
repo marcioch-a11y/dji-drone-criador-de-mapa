@@ -13,6 +13,7 @@ def main():
     parser.add_argument("--quality", default="medium", choices=["low", "medium", "high"], help="Qualidade do processamento (low, medium, high). Padrão: medium")
     parser.add_argument("--resolution", type=float, default=4.0, help="Resolução da ortofoto (cm/pixel). Padrão: 4.0")
     parser.add_argument("--kmz-name", default="", help="Nome personalizado para o arquivo KMZ gerado (opcional)")
+    parser.add_argument("--mesh-3d", action="store_true", help="Gera modelo 3D texturizado (GLB / OBJ)")
     
     args = parser.parse_args()
 
@@ -40,6 +41,7 @@ def main():
     print(f"Diretório de entrada: {args.photos}")
     print(f"Filtro aplicado: {pattern}")
     print(f"Total de imagens encontradas: {len(files)}")
+    print(f"Geração de Modelo 3D: {'ATIVADA (GLB/OBJ)' if args.mesh_3d else 'DESATIVADA (Modo 2D Rápido)'}")
     
     if not files:
         print("Erro: Nenhuma imagem encontrada com o padrão especificado ou qualquer outro formato de imagem (.jpg, .png, .jpeg) na pasta informada.", file=sys.stderr)
@@ -63,6 +65,11 @@ def main():
         'min-num-features': 4000,
         'orthophoto-kmz': True  # Gera nativamente o arquivo KMZ para Google Earth
     }
+    
+    if not args.mesh_3d:
+        options['skip-3dmodel'] = True
+    else:
+        options['use-3dmesh'] = True
     
     print("\nEnviando imagens e iniciando processamento no WebODM...")
     try:
