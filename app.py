@@ -3,7 +3,7 @@ import sys
 import time
 import subprocess
 import threading
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, send_file, send_from_directory, make_response
 
 app = Flask(__name__, template_folder='templates')
 
@@ -103,6 +103,32 @@ def list_directory():
     })
 
 
+@app.route('/api/video-info', methods=['POST'])
+def video_info():
+    """
+    Retorna metadados e duração de um arquivo de vídeo.
+    """
+    data = request.json or {}
+    video_path = data.get('video_path', '').strip()
+    if not video_path or not os.path.exists(video_path):
+        return jsonify({'status': 'error', 'message': 'Arquivo de vídeo não encontrado.'}), 404
+    
+    try:
+        from processador_video import get_video_info
+        info = get_video_info(video_path)
+        duration_s = info['duration']
+        mins = int(duration_s // 60)
+        secs = duration_s % 60
+        formatted = f"{mins}m {secs:.1f}s" if mins > 0 else f"{secs:.1f}s"
+        return jsonify({
+            'status': 'success',
+            'fps': info['fps'],
+            'total_frames': info['total_frames'],
+            'duration': round(duration_s, 2),
+            'formatted_duration': formatted
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 @app.route('/api/status', methods=['GET'])
@@ -305,6 +331,807 @@ def run_webodm():
             active_process = None
             return jsonify({'status': 'error', 'message': f'Erro ao iniciar tarefa do WebODM: {str(e)}'}), 500
 
+
+
+@app.route('/api/adjust-kmz', methods=['POST'])
+def adjust_kmz():
+    """
+    Ajusta as coordenadas geográficas de um KMZ (SuperOverlay) deslocando-o em metros.
+    """
+    import zipfile
+    import tempfile
+    import shutil
+    import re
+    import math
+
+    data = request.json or {}
+    kmz_path = data.get('kmz_path')
+    lat_shift_m = float(data.get('lat_shift_m', 0.0))
+    lon_shift_m = float(data.get('lon_shift_m', 0.0))
+
+    if not kmz_path or not os.path.exists(kmz_path):
+        return jsonify({'status': 'error', 'message': 'Arquivo KMZ original não encontrado.'}), 400
+
+    # Determinar caminho de saída (adiciona _ajustado ao nome do arquivo original se não especificado)
+    dir_name = os.path.dirname(kmz_path)
+    base_name = os.path.basename(kmz_path)
+    name_part, ext_part = os.path.splitext(base_name)
+    output_kmz_path = os.path.join(dir_name, f"{name_part}_ajustado{ext_part}")
+
+    try:
+        # 1. Determinar latitude média aproximada para conversão de metros -> graus
+        avg_lat = -20.0  # valor default seguro
+        with zipfile.ZipFile(kmz_path, 'r') as z:
+            for name in z.namelist():
+                if name.lower().endswith('.kml'):
+                    content = z.read(name).decode('utf-8', errors='ignore')
+                    # Tenta achar latitude ou bounding box
+                    lat_match = re.search(r'<latitude>([^<]+)</latitude>', content)
+                    if lat_match:
+                        avg_lat = float(lat_match.group(1))
+                        break
+                    north_match = re.search(r'<north>([^<]+)</north>', content)
+                    south_match = re.search(r'<south>([^<]+)</south>', content)
+                    if north_match and south_match:
+                        avg_lat = (float(north_match.group(1)) + float(south_match.group(1))) / 2.0
+                        break
+
+        # 2. Converter deslocamento em metros para graus
+        lat_rad = math.radians(avg_lat)
+        # Comprimento de um grau de latitude (m)
+        lat_len = 111132.95 - 559.82 * math.cos(2 * lat_rad) + 1.175 * math.cos(4 * lat_rad)
+        # Comprimento de um grau de longitude (m)
+        lon_len = 111412.84 * math.cos(lat_rad) - 93.5 * math.cos(3 * lat_rad)
+
+        lat_shift_deg = lat_shift_m / lat_len
+        lon_shift_deg = lon_shift_m / lon_len
+
+        # Função auxiliar de regex para shiftar as tags do KML
+        def shift_kml_content(kml_text, lat_s, lon_s):
+            def shift_tag(tag, shift):
+                pattern = re.compile(rf'<{tag}>([^<]+)</{tag}>')
+                def repl(match):
+                    try:
+                        val = float(match.group(1)) + shift
+                        return f'<{tag}>{val:.8f}</{tag}>'
+                    except ValueError:
+                        return match.group(0)
+                return pattern, repl
+
+            for tag in ['north', 'south', 'latitude']:
+                pattern, repl = shift_tag(tag, lat_s)
+                kml_text = pattern.sub(repl, kml_text)
+                
+            for tag in ['east', 'west', 'longitude']:
+                pattern, repl = shift_tag(tag, lon_s)
+                kml_text = pattern.sub(repl, kml_text)
+                
+            return kml_text
+
+        # 3. Processar em diretório temporário
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with zipfile.ZipFile(kmz_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+                
+            kml_count = 0
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    if file.lower().endswith('.kml'):
+                        file_path = os.path.join(root, file)
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                            
+                        content_updated = shift_kml_content(content, lat_shift_deg, lon_shift_deg)
+                        
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(content_updated)
+                        kml_count += 1
+
+            # 4. Salvar novo KMZ
+            with zipfile.ZipFile(output_kmz_path, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, temp_dir)
+                        zip_out.write(file_path, arcname)
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Ajustado {kml_count} arquivos KML. Deslocamento aplicado: lat={lat_shift_deg:.8f}°, lon={lon_shift_deg:.8f}°',
+            'output_path': output_kmz_path
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f'Erro ao processar o KMZ: {str(e)}'}), 500
+
+
+@app.route('/api/generate-adjust-kmz', methods=['POST'])
+def generate_adjust_kmz():
+    import zipfile
+    import re
+
+    data = request.json or {}
+    kmz_path = data.get('kmz_path')
+    print(f"[Generate KMZ] Path received: {kmz_path}")
+
+    if not kmz_path or not os.path.exists(kmz_path):
+        print(f"[Generate KMZ] Error: path not found or empty. Path: {kmz_path}")
+        return jsonify({'status': 'error', 'message': 'Arquivo KMZ original não encontrado.'}), 400
+
+    if not os.path.isfile(kmz_path):
+        print(f"[Generate KMZ] Error: path is a directory, not a file. Path: {kmz_path}")
+        return jsonify({'status': 'error', 'message': 'O caminho selecionado é uma pasta. Por favor, selecione o arquivo .kmz dentro dela.'}), 400
+
+    if not kmz_path.lower().endswith('.kmz'):
+        print(f"[Generate KMZ] Error: file is not a .kmz. Path: {kmz_path}")
+        return jsonify({'status': 'error', 'message': 'Por favor, selecione um arquivo com a extensão .kmz.'}), 400
+
+    dir_name = os.path.dirname(kmz_path)
+    output_preview_kmz = os.path.join(dir_name, "odm_orthophoto_ajuste_visual.kmz")
+
+    try:
+        # 1. Procurar por 0/0/0.kml ou similar no KMZ original
+        print(f"[Generate KMZ] Reading ZIP file at: {kmz_path}")
+        with zipfile.ZipFile(kmz_path, 'r') as z:
+            names = z.namelist()
+            
+            # Encontra o arquivo KML da raiz do tile
+            root_tile_kml_name = None
+            for name in names:
+                if name.endswith('0/0/0.kml'):
+                    root_tile_kml_name = name
+                    break
+            
+            if not root_tile_kml_name:
+                # Fallback: pega o primeiro kml de nível mais baixo
+                kmls = [n for n in names if n.lower().endswith('.kml') and n != 'doc.kml']
+                if kmls:
+                    kmls.sort(key=len)
+                    root_tile_kml_name = kmls[0]
+            
+            if not root_tile_kml_name:
+                return jsonify({'status': 'error', 'message': 'Não foi possível encontrar o arquivo de metadados das imagens no KMZ.'}), 400
+
+            # Ler o KML do tile raiz para extrair as coordenadas
+            tile_kml_content = z.read(root_tile_kml_name).decode('utf-8', errors='ignore')
+            
+            # Extrair latitude e longitude limites para usar LatLonBox (necessário para edição visual no Google Earth Pro)
+            coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', tile_kml_content, re.DOTALL)
+            lons = []
+            lats = []
+            if coords_match:
+                points = coords_match.group(1).strip().split()
+                for pt in points:
+                    parts = pt.split(',')
+                    if len(parts) >= 2:
+                        lons.append(float(parts[0]))
+                        lats.append(float(parts[1]))
+            else:
+                north_val = re.search(r'<north>([^<]+)</north>', tile_kml_content)
+                south_val = re.search(r'<south>([^<]+)</south>', tile_kml_content)
+                east_val = re.search(r'<east>([^<]+)</east>', tile_kml_content)
+                west_val = re.search(r'<west>([^<]+)</west>', tile_kml_content)
+                if north_val and south_val and east_val and west_val:
+                    lats = [float(north_val.group(1)), float(south_val.group(1))]
+                    lons = [float(east_val.group(1)), float(west_val.group(1))]
+
+            if lons and lats:
+                north_coord = max(lats)
+                south_coord = min(lats)
+                east_coord = max(lons)
+                west_coord = min(lons)
+            else:
+                return jsonify({'status': 'error', 'message': 'Não foi possível ler as coordenadas do KMZ.'}), 400
+
+            # Tentar gerar uma imagem de pré-visualização de alta resolução a partir do GeoTIFF
+            preview_image_data = None
+            
+            # Procurar pelo arquivo TIFF leve ou principal na mesma pasta do KMZ
+            tif_names = ["odm_orthophoto_leve.tif", "odm_orthophoto.tif"]
+            tif_path = None
+            for tif_name in tif_names:
+                p = os.path.join(dir_name, tif_name)
+                if os.path.exists(p):
+                    tif_path = p
+                    break
+            
+            if tif_path:
+                try:
+                    from PIL import Image
+                    import io
+                    print(f"[Generate KMZ] Generating high-res preview from TIFF: {tif_path}")
+                    with Image.open(tif_path) as img:
+                        # Redimensionar mantendo proporção (limite de 2048px para não travar o Google Earth)
+                        img.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+                        
+                        # Salvar em buffer de memória como PNG para preservar transparência
+                        img_byte_arr = io.BytesIO()
+                        img.save(img_byte_arr, format='PNG')
+                        preview_image_data = img_byte_arr.getvalue()
+                        print("[Generate KMZ] TIFF preview generated successfully.")
+                except Exception as ex:
+                    print(f"[Generate KMZ] Failed to generate preview from TIFF: {ex}. Falling back to KMZ tile.")
+
+            if not preview_image_data:
+                # Fallback: extrair a imagem do KMZ original (como era feito antes)
+                print("[Generate KMZ] Falling back to tile extraction from KMZ.")
+                image_name = root_tile_kml_name.replace('.kml', '.png')
+                if image_name not in names:
+                    png_files = [n for n in names if n.lower().endswith('.png')]
+                    if png_files:
+                        image_name = png_files[0]
+                    else:
+                        return jsonify({'status': 'error', 'message': 'Nenhuma imagem PNG encontrada no KMZ.'}), 400
+                preview_image_data = z.read(image_name)
+
+        # 2. Criar o novo KMZ simplificado para ajuste visual
+        doc_kml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <GroundOverlay>
+    <name>Mova-me no Google Earth (Ajustador)</name>
+    <description>Mova esta imagem no Google Earth Pro (Botao Direito -> Propriedades) e depois salve como KMZ para aplicar o ajuste no mapa completo.</description>
+    <drawOrder>999</drawOrder>
+    <Icon>
+      <href>preview.png</href>
+    </Icon>
+    <LatLonBox>
+      <north>{north_coord:.8f}</north>
+      <south>{south_coord:.8f}</south>
+      <east>{east_coord:.8f}</east>
+      <west>{west_coord:.8f}</west>
+    </LatLonBox>
+  </GroundOverlay>
+</kml>"""
+
+        with zipfile.ZipFile(output_preview_kmz, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+            zip_out.writestr("doc.kml", doc_kml_content)
+            zip_out.writestr("preview.png", preview_image_data)
+
+        return jsonify({
+            'status': 'success',
+            'message': 'KMZ de ajuste visual criado com sucesso!',
+            'output_path': output_preview_kmz
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'message': f'Erro ao gerar o KMZ de ajuste: {str(e)}'}), 500
+
+
+@app.route('/api/apply-visual-adjust', methods=['POST'])
+def apply_visual_adjust():
+    import zipfile
+    import tempfile
+    import re
+    import os
+
+    data = request.json or {}
+    original_kmz = data.get('original_kmz')
+    adjusted_kmz = data.get('adjusted_kmz')
+
+    if not original_kmz or not os.path.exists(original_kmz):
+        return jsonify({'status': 'error', 'message': 'Arquivo KMZ original não encontrado.'}), 400
+    if not os.path.isfile(original_kmz) or not original_kmz.lower().endswith('.kmz'):
+        return jsonify({'status': 'error', 'message': 'O KMZ original deve ser um arquivo .kmz válido.'}), 400
+
+    if not adjusted_kmz or not os.path.exists(adjusted_kmz):
+        return jsonify({'status': 'error', 'message': 'Arquivo KMZ ajustado não encontrado.'}), 400
+    if not os.path.isfile(adjusted_kmz) or not adjusted_kmz.lower().endswith('.kmz'):
+        return jsonify({'status': 'error', 'message': 'O KMZ ajustado deve ser um arquivo .kmz válido.'}), 400
+
+    try:
+        # 1. Obter coordenadas originais do KMZ de ajuste
+        orig_coords = []
+        with zipfile.ZipFile(original_kmz, 'r') as z:
+            names = z.namelist()
+            root_tile_kml_name = None
+            for name in names:
+                if name.endswith('0/0/0.kml'):
+                    root_tile_kml_name = name
+                    break
+            if not root_tile_kml_name:
+                kmls = [n for n in names if n.lower().endswith('.kml') and n != 'doc.kml']
+                if kmls:
+                    kmls.sort(key=len)
+                    root_tile_kml_name = kmls[0]
+            
+            tile_kml_content = z.read(root_tile_kml_name).decode('utf-8', errors='ignore')
+            coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', tile_kml_content, re.DOTALL)
+            if coords_match:
+                orig_points_str = coords_match.group(1).strip().split()
+                for pt in orig_points_str:
+                    parts = pt.split(',')
+                    if len(parts) >= 2:
+                        orig_coords.append((float(parts[0]), float(parts[1])))
+            else:
+                north = float(re.search(r'<north>([^<]+)</north>', tile_kml_content).group(1))
+                south = float(re.search(r'<south>([^<]+)</south>', tile_kml_content).group(1))
+                east = float(re.search(r'<east>([^<]+)</east>', tile_kml_content).group(1))
+                west = float(re.search(r'<west>([^<]+)</west>', tile_kml_content).group(1))
+                orig_coords = [
+                    (west, south),
+                    (east, south),
+                    (east, north),
+                    (west, north)
+                ]
+
+        # 2. Obter coordenadas ajustadas do KMZ que o usuário salvou do Google Earth
+        adj_coords = []
+        with zipfile.ZipFile(adjusted_kmz, 'r') as z:
+            names = z.namelist()
+            kml_name = [n for n in names if n.lower().endswith('.kml')][0]
+            adjusted_kml_content = z.read(kml_name).decode('utf-8', errors='ignore')
+            
+            coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', adjusted_kml_content, re.DOTALL)
+            if coords_match:
+                adj_points_str = coords_match.group(1).strip().split()
+                for pt in adj_points_str:
+                    parts = pt.split(',')
+                    if len(parts) >= 2:
+                        adj_coords.append((float(parts[0]), float(parts[1])))
+            else:
+                north = re.search(r'<north>([^<]+)</north>', adjusted_kml_content)
+                south = re.search(r'<south>([^<]+)</south>', adjusted_kml_content)
+                east = re.search(r'<east>([^<]+)</east>', adjusted_kml_content)
+                west = re.search(r'<west>([^<]+)</west>', adjusted_kml_content)
+                
+                if north and south and east and west:
+                    n, s, e, w = float(north.group(1)), float(south.group(1)), float(east.group(1)), float(west.group(1))
+                    adj_coords = [
+                        (w, s),
+                        (e, s),
+                        (e, n),
+                        (w, n)
+                    ]
+                else:
+                    return jsonify({'status': 'error', 'message': 'Não foi possível encontrar as coordenadas ajustadas no KMZ salvo.'}), 400
+
+        # Verificar se temos o mesmo número de pontos
+        if len(orig_coords) != len(adj_coords) or len(orig_coords) < 4:
+            return jsonify({'status': 'error', 'message': 'Estrutura de coordenadas incompatível.'}), 400
+
+        # 3. Calcular deslocamento médio
+        lon_shifts = [adj[0] - orig[0] for adj, orig in zip(adj_coords, orig_coords)]
+        lat_shifts = [adj[1] - orig[1] for adj, orig in zip(adj_coords, orig_coords)]
+        
+        lon_shift_deg = sum(lon_shifts) / len(lon_shifts)
+        lat_shift_deg = sum(lat_shifts) / len(lat_shifts)
+
+        # 4. Criar o KMZ final ajustado
+        dir_name = os.path.dirname(original_kmz)
+        base_name = os.path.basename(original_kmz)
+        name_part, ext_part = os.path.splitext(base_name)
+        output_kmz_path = os.path.join(dir_name, f"{name_part}_ajustado_visual{ext_part}")
+
+        def shift_kml_content(kml_text, lat_s, lon_s):
+            def shift_tag(tag, shift):
+                pattern = re.compile(rf'<{tag}>([^<]+)</{tag}>')
+                def repl(match):
+                    try:
+                        val = float(match.group(1)) + shift
+                        return f'<{tag}>{val:.8f}</{tag}>'
+                    except ValueError:
+                        return match.group(0)
+                return pattern, repl
+
+            for tag in ['north', 'south', 'latitude']:
+                pattern, repl = shift_tag(tag, lat_s)
+                kml_text = pattern.sub(repl, kml_text)
+                
+            for tag in ['east', 'west', 'longitude']:
+                pattern, repl = shift_tag(tag, lon_s)
+                kml_text = pattern.sub(repl, kml_text)
+                
+            def shift_coords_str(match):
+                coords_raw = match.group(1)
+                new_coords = []
+                for pt in coords_raw.strip().split():
+                    parts = pt.split(',')
+                    if len(parts) >= 2:
+                        try:
+                            lon = float(parts[0]) + lon_s
+                            lat = float(parts[1]) + lat_s
+                            alt = parts[2] if len(parts) > 2 else '0'
+                            new_coords.append(f"{lon:.8f},{lat:.8f},{alt}")
+                        except ValueError:
+                            new_coords.append(pt)
+                    else:
+                        new_coords.append(pt)
+                return f"<coordinates>{' '.join(new_coords)}</coordinates>"
+
+            kml_text = re.sub(r'<coordinates>([^<]+)</coordinates>', shift_coords_str, kml_text)
+            return kml_text
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with zipfile.ZipFile(original_kmz, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+                
+            kml_count = 0
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    if file.lower().endswith('.kml'):
+                        file_path = os.path.join(root, file)
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                            
+                        content_updated = shift_kml_content(content, lat_shift_deg, lon_shift_deg)
+                        
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(content_updated)
+                        kml_count += 1
+
+            with zipfile.ZipFile(output_kmz_path, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, temp_dir)
+                        zip_out.write(file_path, arcname)
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Ajustado {kml_count} arquivos KML. Deslocamento aplicado: lat={lat_shift_deg:.8f}°, lon={lon_shift_deg:.8f}°',
+            'output_path': output_kmz_path
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f'Erro ao processar o KMZ ajustado: {str(e)}'}), 500
+
+
+@app.route('/api/generate-photos-kml', methods=['POST'])
+def generate_photos_kml():
+    """
+    Lê o EXIF GPS de fotos em um diretório e gera um arquivo KML contendo placemarks.
+    """
+    import os
+    import piexif
+    
+    data = request.json or {}
+    dir_path = data.get('dir_path')
+    
+    if not dir_path or not os.path.exists(dir_path) or not os.path.isdir(dir_path):
+        return jsonify({'status': 'error', 'message': 'Pasta de fotos inválida ou não encontrada.'}), 400
+
+    def parse_rational(rat):
+        if not rat or len(rat) < 2 or rat[1] == 0:
+            return 0.0
+        return float(rat[0]) / float(rat[1])
+
+    # Encontrar fotos
+    photos = [f for f in os.listdir(dir_path) if f.lower().endswith(('.jpg', '.jpeg'))]
+    if not photos:
+        return jsonify({'status': 'error', 'message': 'Nenhuma foto JPG/JPEG encontrada na pasta selecionada.'}), 400
+
+    points = []
+    for filename in photos:
+        img_path = os.path.join(dir_path, filename)
+        try:
+            exif_dict = piexif.load(img_path)
+            gps = exif_dict.get("GPS", {})
+            if gps and piexif.GPSIFD.GPSLatitude in gps and piexif.GPSIFD.GPSLongitude in gps:
+                # Converter lat
+                lat_ref = gps[piexif.GPSIFD.GPSLatitudeRef].decode('ascii')
+                lat_dms = gps[piexif.GPSIFD.GPSLatitude]
+                lat = parse_rational(lat_dms[0]) + parse_rational(lat_dms[1])/60.0 + parse_rational(lat_dms[2])/3600.0
+                if lat_ref == 'S': lat = -lat
+                
+                # Converter lon
+                lon_ref = gps[piexif.GPSIFD.GPSLongitudeRef].decode('ascii')
+                lon_dms = gps[piexif.GPSIFD.GPSLongitude]
+                lon = parse_rational(lon_dms[0]) + parse_rational(lon_dms[1])/60.0 + parse_rational(lon_dms[2])/3600.0
+                if lon_ref == 'W': lon = -lon
+                
+                # Converter altitude
+                alt = 0.0
+                if piexif.GPSIFD.GPSAltitude in gps:
+                    alt = parse_rational(gps[piexif.GPSIFD.GPSAltitude])
+                    alt_ref = gps.get(piexif.GPSIFD.GPSAltitudeRef, 0)
+                    if alt_ref == 1: alt = -alt
+                
+                points.append((filename, lon, lat, alt))
+        except Exception as e:
+            print(f"Error reading EXIF from {filename}: {e}")
+
+    if not points:
+        return jsonify({'status': 'error', 'message': 'Nenhuma das fotos possui dados de posicionamento GPS válidos em seus metadados.'}), 400
+
+    # Gerar KML
+    output_kml = os.path.join(dir_path, "fotos_trajeto.kml")
+    
+    kml_placemarks = []
+    for filename, lon, lat, alt in points:
+        placemark = f"""    <Placemark>
+      <name>{filename}</name>
+      <Point>
+        <coordinates>{lon:.8f},{lat:.8f},{alt:.1f}</coordinates>
+      </Point>
+    </Placemark>"""
+        kml_placemarks.append(placemark)
+        
+    kml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Trajeto de Fotos - DJI Neo</name>
+    <description>Pontos de disparo das fotos georreferenciadas</description>
+{chr(10).join(kml_placemarks)}
+  </Document>
+</kml>"""
+
+    try:
+        with open(output_kml, 'w', encoding='utf-8') as f:
+            f.write(kml_content)
+        return jsonify({
+            'status': 'success',
+            'message': f'Trajeto KML gerado com sucesso com {len(points)} pontos.',
+            'output_path': output_kml
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f'Erro ao salvar arquivo KML: {str(e)}'}), 500
+
+
+@app.route('/api/convert-to-lightweight-kmz', methods=['POST'])
+def convert_to_lightweight_kmz():
+    import zipfile
+    import re
+    import os
+
+    data = request.json or {}
+    kmz_path = data.get('kmz_path')
+
+    if not kmz_path or not os.path.exists(kmz_path) or not os.path.isfile(kmz_path):
+        return jsonify({'status': 'error', 'message': 'Arquivo KMZ original não encontrado.'}), 400
+
+    dir_name = os.path.dirname(kmz_path)
+    base_name = os.path.basename(kmz_path)
+    name_part, ext_part = os.path.splitext(base_name)
+    output_leve_kmz = os.path.join(dir_name, f"{name_part}_leve{ext_part}")
+
+    try:
+        # 1. Procurar por 0/0/0.kml ou similar no KMZ original
+        with zipfile.ZipFile(kmz_path, 'r') as z:
+            names = z.namelist()
+            root_tile_kml_name = None
+            for name in names:
+                if name.endswith('0/0/0.kml'):
+                    root_tile_kml_name = name
+                    break
+            if not root_tile_kml_name:
+                kmls = [n for n in names if n.lower().endswith('.kml') and n != 'doc.kml']
+                if kmls:
+                    kmls.sort(key=len)
+                    root_tile_kml_name = kmls[0]
+            if not root_tile_kml_name:
+                return jsonify({'status': 'error', 'message': 'Não foi possível encontrar metadados de imagem no KMZ.'}), 400
+
+            tile_kml_content = z.read(root_tile_kml_name).decode('utf-8', errors='ignore')
+            coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', tile_kml_content, re.DOTALL)
+            
+            lons = []
+            lats = []
+            if coords_match:
+                points = coords_match.group(1).strip().split()
+                for pt in points:
+                    parts = pt.split(',')
+                    if len(parts) >= 2:
+                        lons.append(float(parts[0]))
+                        lats.append(float(parts[1]))
+            else:
+                north_val = re.search(r'<north>([^<]+)</north>', tile_kml_content)
+                south_val = re.search(r'<south>([^<]+)</south>', tile_kml_content)
+                east_val = re.search(r'<east>([^<]+)</east>', tile_kml_content)
+                west_val = re.search(r'<west>([^<]+)</west>', tile_kml_content)
+                if north_val and south_val and east_val and west_val:
+                    lats = [float(north_val.group(1)), float(south_val.group(1))]
+                    lons = [float(east_val.group(1)), float(west_val.group(1))]
+
+            if lons and lats:
+                north_coord = max(lats)
+                south_coord = min(lats)
+                east_coord = max(lons)
+                west_coord = min(lons)
+            else:
+                return jsonify({'status': 'error', 'message': 'Não foi possível ler as coordenadas do KMZ.'}), 400
+
+            preview_image_data = None
+            tif_names = ["odm_orthophoto_leve.tif", "odm_orthophoto.tif"]
+            for tif_name in tif_names:
+                p = os.path.join(dir_name, tif_name)
+                if os.path.exists(p):
+                    try:
+                        from PIL import Image
+                        import io
+                        with Image.open(p) as img:
+                            img.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+                            img_byte_arr = io.BytesIO()
+                            img.save(img_byte_arr, format='PNG')
+                            preview_image_data = img_byte_arr.getvalue()
+                            break
+                    except Exception:
+                        pass
+
+            if not preview_image_data:
+                image_name = root_tile_kml_name.replace('.kml', '.png')
+                if image_name not in names:
+                    png_files = [n for n in names if n.lower().endswith('.png')]
+                    if png_files:
+                        image_name = png_files[0]
+                preview_image_data = z.read(image_name)
+
+        doc_kml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <GroundOverlay>
+    <name>{name_part}_leve</name>
+    <description>KMZ Leve Otimizado de Imagem Única</description>
+    <drawOrder>999</drawOrder>
+    <Icon>
+      <href>preview.png</href>
+    </Icon>
+    <LatLonBox>
+      <north>{north_coord:.8f}</north>
+      <south>{south_coord:.8f}</south>
+      <east>{east_coord:.8f}</east>
+      <west>{west_coord:.8f}</west>
+    </LatLonBox>
+  </GroundOverlay>
+</kml>"""
+
+        with zipfile.ZipFile(output_leve_kmz, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+            zip_out.writestr("doc.kml", doc_kml_content)
+            zip_out.writestr("preview.png", preview_image_data)
+
+        return jsonify({
+            'status': 'success',
+            'message': 'KMZ leve gerado com sucesso!',
+            'output_path': output_leve_kmz
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'message': f'Erro ao gerar o KMZ leve: {str(e)}'}), 500
+
+
+@app.route('/api/photo-to-kmz', methods=['POST'])
+def photo_to_kmz():
+    import os
+    import zipfile
+    import piexif
+    import math
+
+    data = request.json or {}
+    img_path = data.get('img_path')
+
+    if not img_path or not os.path.exists(img_path) or not os.path.isfile(img_path):
+        return jsonify({'status': 'error', 'message': 'Arquivo de imagem não encontrado.'}), 400
+
+    if not img_path.lower().endswith(('.jpg', '.jpeg')):
+        return jsonify({'status': 'error', 'message': 'Por favor, selecione uma foto no formato JPG ou JPEG.'}), 400
+
+    def parse_rational(rat):
+        if not rat or len(rat) < 2 or rat[1] == 0:
+            return 0.0
+        return float(rat[0]) / float(rat[1])
+
+    try:
+        # 1. Carregar coordenadas EXIF GPS da foto
+        exif_dict = piexif.load(img_path)
+        gps = exif_dict.get("GPS", {})
+        if not gps or piexif.GPSIFD.GPSLatitude not in gps or piexif.GPSIFD.GPSLongitude not in gps:
+            return jsonify({'status': 'error', 'message': 'Esta foto não possui coordenadas GPS válidas nos metadados EXIF.'}), 400
+
+        # Latitude
+        lat_ref = gps[piexif.GPSIFD.GPSLatitudeRef].decode('ascii')
+        lat_dms = gps[piexif.GPSIFD.GPSLatitude]
+        lat = parse_rational(lat_dms[0]) + parse_rational(lat_dms[1])/60.0 + parse_rational(lat_dms[2])/3600.0
+        if lat_ref == 'S': lat = -lat
+        
+        # Longitude
+        lon_ref = gps[piexif.GPSIFD.GPSLongitudeRef].decode('ascii')
+        lon_dms = gps[piexif.GPSIFD.GPSLongitude]
+        lon = parse_rational(lon_dms[0]) + parse_rational(lon_dms[1])/60.0 + parse_rational(lon_dms[2])/3600.0
+        if lon_ref == 'W': lon = -lon
+        
+        # Altitude (se houver, senão assume 40m de padrão de voo)
+        alt = 40.0
+        if piexif.GPSIFD.GPSAltitude in gps:
+            alt_val = parse_rational(gps[piexif.GPSIFD.GPSAltitude])
+            if alt_val > 0:
+                alt = alt_val
+                
+        # 2. Calcular limites da projeção baseados na altura do voo
+        # Assumindo FOV de ~85 graus horizontal
+        fov_h_rad = math.radians(85.0)
+        fov_v_rad = math.radians(65.0)
+        
+        width_m = 2.0 * alt * math.tan(fov_h_rad / 2.0)
+        height_m = 2.0 * alt * math.tan(fov_v_rad / 2.0)
+        
+        # Converter metros para graus
+        lat_rad = math.radians(lat)
+        lat_len = 111132.95 - 559.82 * math.cos(2 * lat_rad) + 1.175 * math.cos(4 * lat_rad)
+        lon_len = 111412.84 * math.cos(lat_rad) - 93.5 * math.cos(3 * lat_rad)
+        
+        lat_delta = (height_m / 2.0) / lat_len
+        lon_delta = (width_m / 2.0) / lon_len
+        
+        north = lat + lat_delta
+        south = lat - lat_delta
+        east = lon + lon_delta
+        west = lon - lon_delta
+
+        # Diretorio e nomes de saida
+        dir_name = os.path.dirname(img_path)
+        base_name = os.path.basename(img_path)
+        name_part, ext_part = os.path.splitext(base_name)
+        output_kmz = os.path.join(dir_name, f"{name_part}.kmz")
+
+        # 3. Gerar KML
+        doc_kml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <GroundOverlay>
+    <name>{name_part}</name>
+    <description>Foto de Drone projetada via GPS. Altitude de voo estimada: {alt:.1f}m.</description>
+    <drawOrder>10</drawOrder>
+    <Icon>
+      <href>imagem.jpg</href>
+    </Icon>
+    <LatLonBox>
+      <north>{north:.8f}</north>
+      <south>{south:.8f}</south>
+      <east>{east:.8f}</east>
+      <west>{west:.8f}</west>
+    </LatLonBox>
+  </GroundOverlay>
+</kml>"""
+
+        # 4. Criar o KMZ empacotando o KML e copiando a foto
+        with zipfile.ZipFile(output_kmz, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+            zip_out.writestr("doc.kml", doc_kml_content)
+            zip_out.write(img_path, "imagem.jpg")
+
+        return jsonify({
+            'status': 'success',
+            'message': f'KMZ gerado com sucesso para a foto {base_name}. Coordenadas: {lat:.6f}, {lon:.6f}',
+            'output_path': output_kmz
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'message': f'Erro ao gerar o KMZ da foto: {str(e)}'}), 500
+
+
+@app.route('/viewer-3d')
+
+
+
+
+
+def viewer_3d():
+    """
+    Visualizador 3D do modelo texturizado gerado pelo WebODM.
+    """
+    model_path = request.args.get('path', r"C:\Users\mkas2\Desktop\talhao\teste\Resultado_webodm\odm_texturing\odm_textured_model_geo.glb")
+    response = make_response(render_template('viewer_3d.html', model_path=model_path))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+@app.route('/api/3d-model')
+def get_3d_model():
+    """
+    Serve o arquivo GLB do modelo 3D.
+    """
+    model_path = request.args.get('path', r"C:\Users\mkas2\Desktop\talhao\teste\Resultado_webodm\odm_texturing\odm_textured_model_geo.glb")
+    if os.path.exists(model_path):
+        return send_file(model_path, mimetype='model/gltf-binary', conditional=True)
+    else:
+        return jsonify({'error': 'Modelo 3D não encontrado'}), 404
+
+@app.route('/api/odm-static/<path:filename>')
+def serve_odm_static(filename):
+    """
+    Serve arquivos estáticos da pasta do WebODM (OBJ, MTL, Imagens de textura).
+    """
+    directory = r"C:\Users\mkas2\Desktop\talhao\teste\Resultado_webodm\odm_texturing"
+    return send_from_directory(directory, filename)
+
 if __name__ == '__main__':
-    # Roda o servidor Flask localmente na porta 5000
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Roda o servidor Flask localmente na porta 5001 para burlar o cache
+    app.run(host='0.0.0.0', port=5001, debug=False)

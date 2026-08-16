@@ -111,6 +111,18 @@ def main():
                 print(f"   - Ortofoto Geotiff:  {os.path.abspath(tif_path)}")
             if os.path.isfile(kmz_path):
                 print(f"   - Ortofoto Google Earth: {os.path.abspath(kmz_path)}")
+                
+                # Salva / copia o KMZ em um subdiretório da pasta onde estão as fotos georreferenciadas
+                try:
+                    import shutil
+                    kmz_subfolder = os.path.join(args.photos, "kmz_mapa")
+                    os.makedirs(kmz_subfolder, exist_ok=True)
+                    dest_kmz = os.path.join(kmz_subfolder, "odm_orthophoto.kmz")
+                    shutil.copy2(kmz_path, dest_kmz)
+                    print(f"   - KMZ salvo na pasta das fotos: {os.path.abspath(dest_kmz)}")
+                except Exception as ex_copy:
+                    print(f"   [Aviso ao copiar KMZ para pasta das fotos: {ex_copy}]")
+
             print(f"   - DSM: {os.path.abspath(os.path.join(args.out, 'odm_dem', 'dsm.tif'))}")
         else:
             print(f"\n[ERRO] O processamento falhou. Status final do NodeODM: {status_str}", file=sys.stderr)

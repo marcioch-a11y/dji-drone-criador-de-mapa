@@ -563,8 +563,9 @@
     </header>
 
     <main>
-        <div class="panel">
-            <h2 class="panel-title">Parâmetros de Entrada</h2>
+        <div style="display: flex; flex-direction: column; gap: 24px; min-width: 0;">
+            <div class="panel">
+                <h2 class="panel-title">Parâmetros de Entrada</h2>
             
             <div class="mode-selector">
                 <button type="button" id="modeVideo" class="mode-btn active" onclick="setMode('video')">Modo Vídeo</button>
@@ -574,9 +575,14 @@
             <!-- Inputs Dinâmicos Modo Vídeo -->
             <div id="videoFields" class="form-group-container" style="display: flex; flex-direction: column; gap: 20px;">
                 <div class="form-group">
-                    <label for="videoPath">Caminho do Vídeo (.MP4)</label>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <label for="videoPath">Caminho do Vídeo (.MP4)</label>
+                        <span id="videoDurationBadge" style="display: none; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: rgba(59, 130, 246, 0.15); color: var(--accent-blue); border: 1px solid rgba(59, 130, 246, 0.3);">
+                            ⏱️ Duração: <span id="videoDurationVal">--</span>
+                        </span>
+                    </div>
                     <div class="input-with-button">
-                        <input type="text" id="videoPath" placeholder="Clique em Procurar ou insira o caminho do vídeo">
+                        <input type="text" id="videoPath" placeholder="Clique em Procurar ou insira o caminho do vídeo" onchange="onVideoPathChanged(this.value)" oninput="onVideoPathChanged(this.value)">
                         <button type="button" class="btn-browse" onclick="selectFile('video', 'videoPath')">Procurar...</button>
                     </div>
                 </div>
@@ -676,10 +682,115 @@
                 <button type="button" id="btnWebODM" class="btn btn-green" onclick="startWebODM()">
                     <span>🗺️</span> Processar no WebODM (Gerar Ortofoto e KMZ 2D)
                 </button>
+                <a href="/viewer-3d" target="_blank" class="btn" style="background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%); display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; color: white; margin-top: 4px; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);">
+                    <span>📐</span> Visualizar Modelo 3D (GLB)
+                </a>
             </div>
 
-
         </div>
+
+        <!-- Painel de Ajuste Fino de Posição do KMZ -->
+        <div class="panel">
+            <h2 class="panel-title" style="border-left-color: var(--accent-green);">Ajuste Fino de Posição (Google Earth KMZ)</h2>
+            <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 12px;">
+                Como o Google Earth Pro não permite mover a ortofoto do SuperOverlay diretamente na tela de propriedades (por ser carregada em blocos via rede), use um dos métodos abaixo para fazer o ajuste fino.
+            </p>
+
+            <div style="display: flex; gap: 8px; margin-bottom: 16px; background: rgba(0,0,0,0.2); padding: 4px; border-radius: 8px; border: 1px solid var(--border-color);">
+                <button type="button" id="tabVisual" class="mode-btn active" style="font-size: 12px;" onclick="setAdjustMethod('visual')">Ajuste Visual 👁️</button>
+                <button type="button" id="tabManual" class="mode-btn" style="font-size: 12px;" onclick="setAdjustMethod('manual')">Ajuste Manual (Metros) 📐</button>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label for="kmzPathToAdjust">Arquivo KMZ Original (WebODM)</label>
+                <div class="input-with-button">
+                    <input type="text" id="kmzPathToAdjust" placeholder="Selecione o arquivo .kmz original do WebODM">
+                    <button type="button" class="btn-browse" onclick="selectFile('all', 'kmzPathToAdjust')">Procurar...</button>
+                </div>
+            </div>
+
+            <!-- Método Visual -->
+            <div id="methodVisual" style="display: flex; flex-direction: column; gap: 16px;">
+                <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">
+                    <strong>Passo 1:</strong> Gerar um KMZ leve (~50KB) contendo apenas o contorno e imagem de visualização rápida da ortofoto.
+                </p>
+                <button type="button" id="btnGenPreview" class="btn" style="background: var(--accent-blue); padding: 10px 16px; font-size: 13px;" onclick="generateVisualPreviewKMZ()">
+                    1. Gerar KMZ de Visualização
+                </button>
+                
+                <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4; border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 4px;">
+                    <strong>Passo 2:</strong> Abra o arquivo gerado (<code>odm_orthophoto_ajuste_visual.kmz</code>) no Google Earth Pro, clique com o botão direito em <em>"Mova-me no Google Earth (Ajustador)"</em> -> <em>Propriedades</em>. Mova, rotacione ou redimensione o contorno verde até alinhar perfeitamente. Clique em OK e salve-o como KMZ novamente (Ex: <code>salvo.kmz</code>).
+                </p>
+                
+                <div class="form-group">
+                    <label for="adjustedKMZPath">KMZ Ajustado e Salvo do Google Earth</label>
+                    <div class="input-with-button">
+                        <input type="text" id="adjustedKMZPath" placeholder="Selecione o arquivo .kmz ajustado salvo do Google Earth">
+                        <button type="button" class="btn-browse" onclick="selectFile('all', 'adjustedKMZPath')">Procurar...</button>
+                    </div>
+                </div>
+                
+                <button type="button" id="btnApplyVisual" class="btn btn-green" style="padding: 12px 16px; font-size: 13px;" onclick="applyVisualKMZAdjustment()">
+                    2. Aplicar Ajuste Visual ao Mapa Completo
+                </button>
+            </div>
+
+            <!-- Método Manual -->
+            <div id="methodManual" style="display: none; flex-direction: column; gap: 16px;">
+                <div class="row-grid">
+                    <div class="form-group">
+                        <label for="latShiftM">Deslocamento Norte / Sul (Metros)</label>
+                        <input type="number" id="latShiftM" value="0.0" step="0.5" placeholder="Positivo = Norte, Negativo = Sul">
+                    </div>
+                    <div class="form-group">
+                        <label for="lonShiftM">Deslocamento Leste / Oeste (Metros)</label>
+                        <input type="number" id="lonShiftM" value="0.0" step="0.5" placeholder="Positivo = Leste, Negativo = Oeste">
+                    </div>
+                </div>
+
+                <button type="button" id="btnAdjustKMZ" class="btn btn-green" style="padding: 12px 16px; font-size: 13px;" onclick="adjustKMZCoordinates()">
+                    <span>🎯</span> Aplicar Ajuste Manual e Salvar
+                </button>
+        </div>
+        <!-- Painel de Gerador de KMZ Otimizado Leve -->
+        <div class="panel">
+            <h2 class="panel-title" style="border-left-color: var(--accent-green);">Criar KMZ Otimizado Leve (Imagem Única)</h2>
+            <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5;">
+                O arquivo original do WebODM (700MB+) é pesado e lento no Google Earth. Selecione o arquivo KMZ original abaixo para convertê-lo instantaneamente em um arquivo KMZ leve (1-2MB) e de alta resolução pronto para uso.
+            </p>
+
+            <div class="form-group">
+                <label for="heavyKmzPath">Arquivo KMZ Pesado (WebODM)</label>
+                <div class="input-with-button">
+                    <input type="text" id="heavyKmzPath" placeholder="Selecione o arquivo .kmz original de 700MB+">
+                    <button type="button" class="btn-browse" onclick="selectFile('all', 'heavyKmzPath')">Procurar...</button>
+                </div>
+            </div>
+
+            <button type="button" id="btnConvertLeve" class="btn btn-green" style="margin-top: 8px; padding: 12px 16px; font-size: 13px;" onclick="convertKMZToLeve()">
+                <span>⚡</span> Gerar KMZ Leve Otimizado
+            </button>
+        <!-- Painel de Gerador de KMZ de Foto Única -->
+        <div class="panel">
+            <h2 class="panel-title" style="border-left-color: var(--accent-blue);">Criar KMZ de Foto Única (Sobreposição)</h2>
+            <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5;">
+                Selecione uma foto individual (.JPG) tirada pelo drone contendo coordenadas GPS. O aplicativo extrairá a localização e gerará um arquivo KMZ com a foto projetada como imagem de sobreposição no solo no Google Earth.
+            </p>
+
+            <div class="form-group">
+                <label for="singlePhotoPath">Selecionar Foto (.JPG)</label>
+                <div class="input-with-button">
+                    <input type="text" id="singlePhotoPath" placeholder="Selecione a foto do drone contendo dados GPS">
+                    <button type="button" class="btn-browse" onclick="selectFile('all', 'singlePhotoPath')">Procurar...</button>
+                </div>
+            </div>
+
+            <button type="button" id="btnGenSinglePhotoKmz" class="btn" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); margin-top: 8px; padding: 12px 16px; font-size: 13px;" onclick="generateSinglePhotoKMZ()">
+                <span>📸</span> Gerar KMZ de Sobreposição
+            </button>
+        </div>
+    </div>
+
 
         <div class="terminal-panel">
             <div class="terminal-header">
@@ -956,8 +1067,66 @@
 
             if (finalPath) {
                 document.getElementById(explorerState.targetInputId).value = finalPath;
+                
+                // Se foi selecionado um vídeo, dispara o auto-carregamento do SRT e a duração do vídeo
+                if (explorerState.targetInputId === 'videoPath') {
+                    onVideoPathChanged(finalPath);
+                }
+                
                 closeExplorer();
             }
+        }
+
+        let videoInfoTimeout = null;
+        function onVideoPathChanged(videoPath) {
+            videoPath = (videoPath || '').trim();
+            if (!videoPath) {
+                document.getElementById('videoDurationBadge').style.display = 'none';
+                return;
+            }
+
+            // 1. Auto-carrega o caminho do SRT correspondente (mesmo nome e pasta com .SRT ou .srt)
+            autoLoadSrtFromVideo(videoPath);
+
+            // 2. Consulta a duração do vídeo com debounce
+            if (videoInfoTimeout) clearTimeout(videoInfoTimeout);
+            videoInfoTimeout = setTimeout(() => {
+                fetchVideoDuration(videoPath);
+            }, 300);
+        }
+
+        function autoLoadSrtFromVideo(videoPath) {
+            const lastDot = videoPath.lastIndexOf('.');
+            if (lastDot !== -1) {
+                const srtPath = videoPath.substring(0, lastDot) + '.SRT';
+                // Define no campo de telemetria SRT caso ainda não esteja preenchido manualmente com outro arquivo
+                const srtInput = document.getElementById('srtPath');
+                srtInput.value = srtPath;
+            }
+        }
+
+        function fetchVideoDuration(videoPath) {
+            const badge = document.getElementById('videoDurationBadge');
+            const valSpan = document.getElementById('videoDurationVal');
+
+            fetch('/api/video-info', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ video_path: videoPath })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    valSpan.textContent = `${data.formatted_duration} (${data.duration}s | ${data.fps.toFixed(1)} fps)`;
+                    badge.style.display = 'inline-block';
+                    appendToTerminal(`[Vídeo Carregado]: Duração total = ${data.formatted_duration} (${data.duration}s) | FPS = ${data.fps.toFixed(1)}`, 'info');
+                } else {
+                    badge.style.display = 'none';
+                }
+            })
+            .catch(() => {
+                badge.style.display = 'none';
+            });
         }
 
 
@@ -1115,6 +1284,199 @@
             .catch(err => {
                 appendToTerminal("Erro de comunicação com o servidor.", 'error');
                 updateStatus(false);
+            });
+        }
+
+        let currentAdjustMethod = 'visual';
+
+        function setAdjustMethod(method) {
+            currentAdjustMethod = method;
+            document.getElementById('tabVisual').classList.toggle('active', method === 'visual');
+            document.getElementById('tabManual').classList.toggle('active', method === 'manual');
+            document.getElementById('methodVisual').style.display = method === 'visual' ? 'flex' : 'none';
+            document.getElementById('methodManual').style.display = method === 'manual' ? 'flex' : 'none';
+        }
+
+        function generateVisualPreviewKMZ() {
+            const kmzPath = document.getElementById('kmzPathToAdjust').value.trim();
+            if (!kmzPath) {
+                alert("Por favor, selecione o arquivo KMZ original primeiro.");
+                return;
+            }
+
+            appendToTerminal("--- GERANDO KMZ DE AJUSTE VISUAL ---", 'info');
+            const btn = document.getElementById('btnGenPreview');
+            btn.disabled = true;
+
+            fetch('/api/generate-adjust-kmz', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kmz_path: kmzPath })
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                if (data.status === 'success') {
+                    appendToTerminal(`Sucesso! KMZ de visualização rápida gerado em: ${data.output_path}`, 'info');
+                    appendToTerminal("Abra este arquivo no Google Earth Pro, ajuste-o nas propriedades (mova/redimensione a imagem) e salve de volta como KMZ.", 'info');
+                    alert(`KMZ de ajuste gerado!\nSalvo em: ${data.output_path}\n\nInstruções:\n1. Abra este arquivo no Google Earth Pro.\n2. Clique com botão direito nele -> Propriedades.\n3. Mova-o visualmente na tela.\n4. Clique OK, depois clique com botão direito -> Salvar lugar como... e salve no computador.\n5. Selecione este arquivo salvo no Passo 2.`);
+                } else {
+                    appendToTerminal(`Erro: ${data.message}`, 'error');
+                    alert(`Erro ao gerar KMZ de ajuste: ${data.message}`);
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                appendToTerminal("Erro de comunicação com o servidor.", 'error');
+            });
+        }
+
+        function applyVisualKMZAdjustment() {
+            const origKmz = document.getElementById('kmzPathToAdjust').value.trim();
+            const adjKmz = document.getElementById('adjustedKMZPath').value.trim();
+
+            if (!origKmz || !adjKmz) {
+                alert("Por favor, selecione tanto o KMZ original quanto o KMZ ajustado salvo do Google Earth.");
+                return;
+            }
+
+            appendToTerminal("--- APLICANDO AJUSTE VISUAL AO MAPA COMPLETO ---", 'info');
+            const btn = document.getElementById('btnApplyVisual');
+            btn.disabled = true;
+
+            fetch('/api/apply-visual-adjust', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    original_kmz: origKmz,
+                    adjusted_kmz: adjKmz
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                if (data.status === 'success') {
+                    appendToTerminal(`Sucesso! Ajuste aplicado ao mapa completo.`, 'info');
+                    appendToTerminal(`Mapa ajustado final salvo em: ${data.output_path}`, 'info');
+                    alert(`Mapa ajustado com sucesso!\nSalvo em: ${data.output_path}`);
+                } else {
+                    appendToTerminal(`Erro ao aplicar ajuste: ${data.message}`, 'error');
+                    alert(`Erro ao aplicar ajuste: ${data.message}`);
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                appendToTerminal("Erro de comunicação com o servidor.", 'error');
+            });
+        }
+
+        function convertKMZToLeve() {
+            const kmzPath = document.getElementById('heavyKmzPath').value.trim();
+            if (!kmzPath) {
+                alert("Por favor, selecione o arquivo KMZ pesado.");
+                return;
+            }
+
+            appendToTerminal(`--- GERANDO KMZ LEVE OTIMIZADO DE IMAGEM ÚNICA ---`, 'info');
+            const btn = document.getElementById('btnConvertLeve');
+            btn.disabled = true;
+
+            fetch('/api/convert-to-lightweight-kmz', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kmz_path: kmzPath })
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                if (data.status === 'success') {
+                    appendToTerminal(`Sucesso! KMZ leve otimizado gerado em: ${data.output_path}`, 'info');
+                    alert(`KMZ leve gerado com sucesso!\nSalvo em: ${data.output_path}\n\nVocê já pode abrir este arquivo diretamente no Google Earth.`);
+                } else {
+                    appendToTerminal(`Erro: ${data.message}`, 'error');
+                    alert(`Erro ao gerar KMZ leve: ${data.message}`);
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                appendToTerminal("Erro de comunicação com o servidor.", 'error');
+            });
+        }
+
+        function generateSinglePhotoKMZ() {
+            const imgPath = document.getElementById('singlePhotoPath').value.trim();
+            if (!imgPath) {
+                alert("Por favor, selecione a foto JPG.");
+                return;
+            }
+
+            appendToTerminal(`--- GERANDO KMZ DE SOBREPOSIÇÃO PARA FOTO: ${imgPath} ---`, 'info');
+            const btn = document.getElementById('btnGenSinglePhotoKmz');
+            btn.disabled = true;
+
+            fetch('/api/photo-to-kmz', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ img_path: imgPath })
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                if (data.status === 'success') {
+                    appendToTerminal(`Sucesso! KMZ gerado em: ${data.output_path}`, 'info');
+                    alert(`KMZ gerado com sucesso!\nSalvo em: ${data.output_path}\n\nDê dois cliques neste arquivo para abri-lo posicionado no Google Earth!`);
+                } else {
+                    appendToTerminal(`Erro: ${data.message}`, 'error');
+                    alert(`Erro ao gerar KMZ: ${data.message}`);
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                appendToTerminal("Erro de comunicação com o servidor.", 'error');
+            });
+        }
+
+        function adjustKMZCoordinates() {
+            const kmzPath = document.getElementById('kmzPathToAdjust').value.trim();
+            const latShift = parseFloat(document.getElementById('latShiftM').value) || 0.0;
+            const lonShift = parseFloat(document.getElementById('lonShiftM').value) || 0.0;
+
+            if (!kmzPath) {
+                alert("Por favor, selecione o arquivo KMZ para ajustar.");
+                return;
+            }
+
+            appendToTerminal(`--- INICIANDO AJUSTE DO KMZ: ${kmzPath} ---`, 'info');
+            appendToTerminal(`Deslocamento: Norte/Sul = ${latShift}m, Leste/Oeste = ${lonShift}m`, 'info');
+
+            const btn = document.getElementById('btnAdjustKMZ');
+            btn.disabled = true;
+
+            fetch('/api/adjust-kmz', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    kmz_path: kmzPath,
+                    lat_shift_m: latShift,
+                    lon_shift_m: lonShift
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                if (data.status === 'success') {
+                    appendToTerminal(`Sucesso! ${data.message}`, 'info');
+                    appendToTerminal(`Arquivo gerado em: ${data.output_path}`, 'info');
+                    alert(`KMZ ajustado com sucesso!\nSalvo em: ${data.output_path}`);
+                } else {
+                    appendToTerminal(`Erro no ajuste: ${data.message}`, 'error');
+                    alert(`Erro ao ajustar KMZ: ${data.message}`);
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                appendToTerminal(`Erro de comunicação com o servidor.`, 'error');
+                alert("Erro ao comunicar com o servidor.");
             });
         }
 
