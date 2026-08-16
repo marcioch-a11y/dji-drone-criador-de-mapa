@@ -848,23 +848,61 @@ def generate_adjust_kmz():
             
             if tif_path:
                 try:
-                    from PIL import Image
+                    from PIL import Image, ImageEnhance, ImageFilter, ImageDraw
                     import io
-                    print(f"[Generate KMZ] Generating high-res preview from TIFF: {tif_path}")
+                    import numpy as np
+                    print(f"[Generate KMZ] Generating high-contrast preview from TIFF: {tif_path}")
                     with Image.open(tif_path) as img:
-                        # Redimensionar mantendo proporção (limite de 2048px para não travar o Google Earth)
-                        img.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+                        # Alta resolução: 4096px para melhor qualidade visual no Google Earth
+                        img.thumbnail((4096, 4096), Image.Resampling.LANCZOS)
+                        img_rgba = img.convert('RGBA')
                         
-                        # Salvar em buffer de memória como PNG para preservar transparência
+                        # Converter para array numpy para aplicar filtro de cor falsa (magenta/quente)
+                        # Isso garante contraste máximo contra o verde do satélite do Google Earth
+                        arr = np.array(img_rgba, dtype=np.float32)
+                        
+                        # Identificar pixels transparentes (alpha == 0) para preservá-los
+                        alpha_mask = arr[:, :, 3] > 10  # pixels visíveis
+                        
+                        # Aplicar falsa-cor: boost vermelho/magenta, reduzir verde
+                        # R = R * 1.4 + 40 (boost vermelho)
+                        # G = G * 0.3       (reduzir verde drasticamente)
+                        # B = B * 1.1 + 30  (leve boost azul para tom magenta)
+                        arr[:, :, 0] = np.clip(arr[:, :, 0] * 1.4 + 40, 0, 255)  # Red boost
+                        arr[:, :, 1] = np.clip(arr[:, :, 1] * 0.3, 0, 255)         # Green suppress
+                        arr[:, :, 2] = np.clip(arr[:, :, 2] * 1.1 + 30, 0, 255)   # Blue boost
+                        
+                        # Restaurar transparência original nos pixels que eram transparentes
+                        arr[~alpha_mask, 3] = 0
+                        
+                        img_tinted = Image.fromarray(arr.astype(np.uint8), 'RGBA')
+                        
+                        # Aumentar contraste e nitidez para melhor legibilidade
+                        enhancer = ImageEnhance.Contrast(img_tinted)
+                        img_tinted = enhancer.enhance(1.3)
+                        enhancer = ImageEnhance.Sharpness(img_tinted)
+                        img_tinted = enhancer.enhance(1.5)
+                        
+                        # Desenhar borda brilhante amarela/ciano ao redor da área visível
+                        draw = ImageDraw.Draw(img_tinted)
+                        border_width = max(4, img_tinted.width // 400)
+                        # Borda externa amarela
+                        for i in range(border_width):
+                            draw.rectangle(
+                                [i, i, img_tinted.width - 1 - i, img_tinted.height - 1 - i],
+                                outline=(255, 255, 0, 220)
+                            )
+                        
+                        # Salvar em buffer de memória como PNG
                         img_byte_arr = io.BytesIO()
-                        img.save(img_byte_arr, format='PNG')
+                        img_tinted.save(img_byte_arr, format='PNG', optimize=True)
                         preview_image_data = img_byte_arr.getvalue()
-                        print("[Generate KMZ] TIFF preview generated successfully.")
+                        print(f"[Generate KMZ] High-contrast magenta preview generated ({img_tinted.width}x{img_tinted.height}px).")
                 except Exception as ex:
                     print(f"[Generate KMZ] Failed to generate preview from TIFF: {ex}. Falling back to KMZ tile.")
 
             if not preview_image_data:
-                # Fallback: extrair a imagem do KMZ original (como era feito antes)
+                # Fallback: extrair a imagem do KMZ original e aplicar tint básico
                 print("[Generate KMZ] Falling back to tile extraction from KMZ.")
                 image_name = root_tile_kml_name.replace('.kml', '.png')
                 if image_name not in names:
@@ -873,14 +911,33 @@ def generate_adjust_kmz():
                         image_name = png_files[0]
                     else:
                         return jsonify({'status': 'error', 'message': 'Nenhuma imagem PNG encontrada no KMZ.'}), 400
-                preview_image_data = z.read(image_name)
+                raw_data = z.read(image_name)
+                # Aplicar tint magenta no fallback também
+                try:
+                    from PIL import Image, ImageEnhance
+                    import io, numpy as np
+                    fallback_img = Image.open(io.BytesIO(raw_data)).convert('RGBA')
+                    arr = np.array(fallback_img, dtype=np.float32)
+                    alpha_mask = arr[:, :, 3] > 10
+                    arr[:, :, 0] = np.clip(arr[:, :, 0] * 1.4 + 40, 0, 255)
+                    arr[:, :, 1] = np.clip(arr[:, :, 1] * 0.3, 0, 255)
+                    arr[:, :, 2] = np.clip(arr[:, :, 2] * 1.1 + 30, 0, 255)
+                    arr[~alpha_mask, 3] = 0
+                    fallback_tinted = Image.fromarray(arr.astype(np.uint8), 'RGBA')
+                    enhancer = ImageEnhance.Contrast(fallback_tinted)
+                    fallback_tinted = enhancer.enhance(1.3)
+                    buf = io.BytesIO()
+                    fallback_tinted.save(buf, format='PNG')
+                    preview_image_data = buf.getvalue()
+                except Exception:
+                    preview_image_data = raw_data
 
         # 2. Criar o novo KMZ simplificado para ajuste visual
         doc_kml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <GroundOverlay>
     <name>Mova-me no Google Earth (Ajustador)</name>
-    <description>Mova esta imagem no Google Earth Pro (Botao Direito -> Propriedades) e depois salve como KMZ para aplicar o ajuste no mapa completo.</description>
+    <description>Mova esta imagem no Google Earth Pro (Botao Direito -&gt; Propriedades) e depois salve como KMZ para aplicar o ajuste no mapa completo. IMAGEM EM FALSA-COR MAGENTA para maximo contraste.</description>
     <drawOrder>999</drawOrder>
     <Icon>
       <href>preview.png</href>

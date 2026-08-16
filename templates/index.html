@@ -875,14 +875,14 @@
             <!-- Método Visual -->
             <div id="methodVisual" style="display: flex; flex-direction: column; gap: 16px;">
                 <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">
-                    <strong>Passo 1:</strong> Gerar um KMZ leve (~50KB) contendo apenas o contorno e imagem de visualização rápida da ortofoto.
+                    <strong>Passo 1:</strong> Gerar um KMZ de alta resolução (4096px) com <span style="color: #f472b6; font-weight: 600;">falsa-cor magenta</span> e borda amarela para máximo contraste contra o verde do satélite.
                 </p>
-                <button type="button" id="btnGenPreview" class="btn" style="background: var(--accent-blue); padding: 10px 16px; font-size: 13px;" onclick="generateVisualPreviewKMZ()">
-                    1. Gerar KMZ de Visualização
+                <button type="button" id="btnGenPreview" class="btn" style="background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); padding: 10px 16px; font-size: 13px; box-shadow: 0 4px 12px rgba(236, 72, 153, 0.3);" onclick="generateVisualPreviewKMZ()">
+                    1. 🔮 Gerar KMZ de Visualização (Falsa-Cor)
                 </button>
                 
                 <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4; border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 4px;">
-                    <strong>Passo 2:</strong> Abra o arquivo gerado (<code>odm_orthophoto_ajuste_visual.kmz</code>) no Google Earth Pro, clique com o botão direito em <em>"Mova-me no Google Earth (Ajustador)"</em> -> <em>Propriedades</em>. Mova, rotacione ou redimensione o contorno verde até alinhar perfeitamente. Clique em OK e salve-o como KMZ novamente (Ex: <code>salvo.kmz</code>).
+                    <strong>Passo 2:</strong> Abra o arquivo gerado (<code>odm_orthophoto_ajuste_visual.kmz</code>) no Google Earth Pro. A imagem aparecerá em <span style="color: #f472b6; font-weight: 600;">magenta/rosa</span> com borda amarela para facilitar a visualização contra o verde do satélite. Clique com o botão direito em <em>"Mova-me no Google Earth (Ajustador)"</em> → <em>Propriedades</em>. Mova e alinhe. Clique em OK e salve como KMZ (Ex: <code>salvo.kmz</code>).
                 </p>
                 
                 <div class="form-group">
