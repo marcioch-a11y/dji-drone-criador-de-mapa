@@ -834,10 +834,14 @@ def generate_adjust_kmz():
             else:
                 return jsonify({'status': 'error', 'message': 'Não foi possível ler as coordenadas do KMZ.'}), 400
 
-            # Tentar gerar uma imagem de pré-visualização de alta resolução a partir do GeoTIFF
+            # Geração da imagem de pré-visualização de ALTA RESOLUÇÃO e ALTO CONTRASTE
+            from PIL import Image, ImageEnhance, ImageDraw
+            import io
+            import numpy as np
+
             preview_image_data = None
             
-            # Procurar pelo arquivo TIFF leve ou principal na mesma pasta do KMZ
+            # Método 1: Tentar GeoTIFF se disponível
             tif_names = ["odm_orthophoto_leve.tif", "odm_orthophoto.tif"]
             tif_path = None
             for tif_name in tif_names:
@@ -846,91 +850,96 @@ def generate_adjust_kmz():
                     tif_path = p
                     break
             
+            base_img = None
             if tif_path:
                 try:
-                    from PIL import Image, ImageEnhance, ImageFilter, ImageDraw
-                    import io
-                    import numpy as np
-                    print(f"[Generate KMZ] Generating high-contrast preview from TIFF: {tif_path}")
+                    print(f"[Generate KMZ] Lendo imagem do GeoTIFF: {tif_path}")
                     with Image.open(tif_path) as img:
-                        # Alta resolução: 4096px para melhor qualidade visual no Google Earth
                         img.thumbnail((4096, 4096), Image.Resampling.LANCZOS)
-                        img_rgba = img.convert('RGBA')
-                        
-                        # Converter para array numpy para aplicar filtro de cor falsa (magenta/quente)
-                        # Isso garante contraste máximo contra o verde do satélite do Google Earth
-                        arr = np.array(img_rgba, dtype=np.float32)
-                        
-                        # Identificar pixels transparentes (alpha == 0) para preservá-los
-                        alpha_mask = arr[:, :, 3] > 10  # pixels visíveis
-                        
-                        # Aplicar falsa-cor: boost vermelho/magenta, reduzir verde
-                        # R = R * 1.4 + 40 (boost vermelho)
-                        # G = G * 0.3       (reduzir verde drasticamente)
-                        # B = B * 1.1 + 30  (leve boost azul para tom magenta)
-                        arr[:, :, 0] = np.clip(arr[:, :, 0] * 1.4 + 40, 0, 255)  # Red boost
-                        arr[:, :, 1] = np.clip(arr[:, :, 1] * 0.3, 0, 255)         # Green suppress
-                        arr[:, :, 2] = np.clip(arr[:, :, 2] * 1.1 + 30, 0, 255)   # Blue boost
-                        
-                        # Restaurar transparência original nos pixels que eram transparentes
-                        arr[~alpha_mask, 3] = 0
-                        
-                        img_tinted = Image.fromarray(arr.astype(np.uint8), 'RGBA')
-                        
-                        # Aumentar contraste e nitidez para melhor legibilidade
-                        enhancer = ImageEnhance.Contrast(img_tinted)
-                        img_tinted = enhancer.enhance(1.3)
-                        enhancer = ImageEnhance.Sharpness(img_tinted)
-                        img_tinted = enhancer.enhance(1.5)
-                        
-                        # Desenhar borda brilhante amarela/ciano ao redor da área visível
-                        draw = ImageDraw.Draw(img_tinted)
-                        border_width = max(4, img_tinted.width // 400)
-                        # Borda externa amarela
-                        for i in range(border_width):
-                            draw.rectangle(
-                                [i, i, img_tinted.width - 1 - i, img_tinted.height - 1 - i],
-                                outline=(255, 255, 0, 220)
-                            )
-                        
-                        # Salvar em buffer de memória como PNG
-                        img_byte_arr = io.BytesIO()
-                        img_tinted.save(img_byte_arr, format='PNG', optimize=True)
-                        preview_image_data = img_byte_arr.getvalue()
-                        print(f"[Generate KMZ] High-contrast magenta preview generated ({img_tinted.width}x{img_tinted.height}px).")
+                        base_img = img.convert('RGBA')
                 except Exception as ex:
-                    print(f"[Generate KMZ] Failed to generate preview from TIFF: {ex}. Falling back to KMZ tile.")
+                    print(f"[Generate KMZ] Erro ao ler GeoTIFF: {ex}")
 
-            if not preview_image_data:
-                # Fallback: extrair a imagem do KMZ original e aplicar tint básico
-                print("[Generate KMZ] Falling back to tile extraction from KMZ.")
-                image_name = root_tile_kml_name.replace('.kml', '.png')
-                if image_name not in names:
-                    png_files = [n for n in names if n.lower().endswith('.png')]
-                    if png_files:
-                        image_name = png_files[0]
-                    else:
-                        return jsonify({'status': 'error', 'message': 'Nenhuma imagem PNG encontrada no KMZ.'}), 400
-                raw_data = z.read(image_name)
-                # Aplicar tint magenta no fallback também
+            # Método 2: Montar tiles do KMZ em alta resolução (Nível 3 ou 4)
+            if base_img is None:
                 try:
-                    from PIL import Image, ImageEnhance
-                    import io, numpy as np
-                    fallback_img = Image.open(io.BytesIO(raw_data)).convert('RGBA')
-                    arr = np.array(fallback_img, dtype=np.float32)
-                    alpha_mask = arr[:, :, 3] > 10
-                    arr[:, :, 0] = np.clip(arr[:, :, 0] * 1.4 + 40, 0, 255)
-                    arr[:, :, 1] = np.clip(arr[:, :, 1] * 0.3, 0, 255)
-                    arr[:, :, 2] = np.clip(arr[:, :, 2] * 1.1 + 30, 0, 255)
-                    arr[~alpha_mask, 3] = 0
-                    fallback_tinted = Image.fromarray(arr.astype(np.uint8), 'RGBA')
-                    enhancer = ImageEnhance.Contrast(fallback_tinted)
-                    fallback_tinted = enhancer.enhance(1.3)
-                    buf = io.BytesIO()
-                    fallback_tinted.save(buf, format='PNG')
-                    preview_image_data = buf.getvalue()
-                except Exception:
-                    preview_image_data = raw_data
+                    png_tiles = [n for n in names if n.endswith('.png') and n != 'preview.png']
+                    levels = sorted(list(set([int(n.split('/')[0]) for n in png_tiles if n.split('/')[0].isdigit()])))
+                    
+                    # Escolhe o nível ideal para alta resolução (nível 3 tem 64 tiles ~2224x952px, nível 4 tem 256 tiles ~4448x1904px)
+                    target_lvl = 3
+                    if 4 in levels:
+                        target_lvl = 4
+                    elif 3 in levels:
+                        target_lvl = 3
+                    elif levels:
+                        target_lvl = max(levels)
+                    
+                    print(f"[Generate KMZ] Montando tiles do KMZ em Alta Resolução (Nível {target_lvl})...")
+                    
+                    # Descobre tamanho do tile
+                    sample_tile_name = [n for n in png_tiles if n.startswith(f'{target_lvl}/')][0]
+                    sample_img = Image.open(io.BytesIO(z.read(sample_tile_name)))
+                    tile_w, tile_h = sample_img.size
+                    num_tiles = 2 ** target_lvl
+                    
+                    stitched = Image.new('RGBA', (tile_w * num_tiles, tile_h * num_tiles), (0, 0, 0, 0))
+                    
+                    for col in range(num_tiles):
+                        for row in range(num_tiles):
+                            tile_name = f"{target_lvl}/{col}/{row}.png"
+                            if tile_name in names:
+                                data = z.read(tile_name)
+                                if len(data) > 0:
+                                    timg = Image.open(io.BytesIO(data)).convert('RGBA')
+                                    stitched.paste(timg, (col * tile_w, (num_tiles - 1 - row) * tile_h))
+                    
+                    base_img = stitched
+                    print(f"[Generate KMZ] Tiles montados com sucesso! Resolução: {base_img.size[0]}x{base_img.size[1]}px")
+                except Exception as ex:
+                    print(f"[Generate KMZ] Erro ao montar tiles: {ex}")
+
+            # Fallback Método 3: Imagem raiz 0/0/0.png
+            if base_img is None:
+                image_name = root_tile_kml_name.replace('.kml', '.png')
+                if image_name in names:
+                    base_img = Image.open(io.BytesIO(z.read(image_name))).convert('RGBA')
+
+            if base_img is None:
+                return jsonify({'status': 'error', 'message': 'Nenhuma imagem pôde ser extraída do KMZ.'}), 400
+
+            # Aplicar filtro de cor falsa (MAGENTA / VIOLETA VIVO) e aumento de contraste
+            # Garante que a imagem se destaque totalmente sobre o satélite verde do Google Earth
+            arr = np.array(base_img, dtype=np.float32)
+            alpha_mask = arr[:, :, 3] > 10
+            
+            # Multiplicadores de cor: Realça Vermelho e Azul (Magenta), suprime Verde
+            arr[:, :, 0] = np.clip(arr[:, :, 0] * 1.5 + 50, 0, 255) # Red boost
+            arr[:, :, 1] = np.clip(arr[:, :, 1] * 0.15, 0, 255)     # Green suppress
+            arr[:, :, 2] = np.clip(arr[:, :, 2] * 1.3 + 40, 0, 255) # Blue boost
+            arr[~alpha_mask, 3] = 0
+            
+            img_tinted = Image.fromarray(arr.astype(np.uint8), 'RGBA')
+            
+            # Aumentar contraste e nitidez
+            enhancer = ImageEnhance.Contrast(img_tinted)
+            img_tinted = enhancer.enhance(1.4)
+            enhancer = ImageEnhance.Sharpness(img_tinted)
+            img_tinted = enhancer.enhance(1.6)
+            
+            # Adicionar contorno amarelo neon ao redor
+            draw = ImageDraw.Draw(img_tinted)
+            border_w = max(4, img_tinted.width // 300)
+            for i in range(border_w):
+                draw.rectangle(
+                    [i, i, img_tinted.width - 1 - i, img_tinted.height - 1 - i],
+                    outline=(255, 255, 0, 240)
+                )
+            
+            img_byte_arr = io.BytesIO()
+            img_tinted.save(img_byte_arr, format='PNG', optimize=True)
+            preview_image_data = img_byte_arr.getvalue()
+            print(f"[Generate KMZ] KMZ de ajuste gerado com sucesso ({img_tinted.width}x{img_tinted.height}px - Magenta Neon).")
 
         # 2. Criar o novo KMZ simplificado para ajuste visual
         doc_kml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
