@@ -806,33 +806,52 @@ def generate_adjust_kmz():
             # Ler o KML do tile raiz para extrair as coordenadas
             tile_kml_content = z.read(root_tile_kml_name).decode('utf-8', errors='ignore')
             
-            # Extrair latitude e longitude limites para usar LatLonBox (necessário para edição visual no Google Earth Pro)
+            # Extrair latitude e longitude limites com cálculo de rotação para LatLonBox
+            import math
             coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', tile_kml_content, re.DOTALL)
-            lons = []
-            lats = []
+            
             if coords_match:
-                points = coords_match.group(1).strip().split()
-                for pt in points:
+                pts = coords_match.group(1).strip().split()
+                coords = []
+                for pt in pts:
                     parts = pt.split(',')
                     if len(parts) >= 2:
-                        lons.append(float(parts[0]))
-                        lats.append(float(parts[1]))
+                        coords.append((float(parts[0]), float(parts[1])))
+                
+                # gx:LatLonQuad: 0=SW, 1=SE, 2=NE, 3=NW
+                sw_lon, sw_lat = coords[0]
+                se_lon, se_lat = coords[1]
+                ne_lon, ne_lat = coords[2]
+                nw_lon, nw_lat = coords[3]
+                
+                center_lat = (sw_lat + se_lat + ne_lat + nw_lat) / 4.0
+                center_lon = (sw_lon + se_lon + ne_lon + nw_lon) / 4.0
+                
+                cos_lat = math.cos(math.radians(center_lat))
+                dx = (se_lon - sw_lon) * cos_lat
+                dy = (se_lat - sw_lat)
+                rotation_deg = math.degrees(math.atan2(dy, dx))
+                
+                width_deg = math.sqrt(((se_lon - sw_lon) * cos_lat) ** 2 + (se_lat - sw_lat) ** 2) / cos_lat
+                height_deg = math.sqrt(((nw_lon - sw_lon) * cos_lat) ** 2 + (nw_lat - sw_lat) ** 2)
+                
+                north_coord = center_lat + height_deg / 2.0
+                south_coord = center_lat - height_deg / 2.0
+                east_coord = center_lon + width_deg / 2.0
+                west_coord = center_lon - width_deg / 2.0
             else:
                 north_val = re.search(r'<north>([^<]+)</north>', tile_kml_content)
                 south_val = re.search(r'<south>([^<]+)</south>', tile_kml_content)
                 east_val = re.search(r'<east>([^<]+)</east>', tile_kml_content)
                 west_val = re.search(r'<west>([^<]+)</west>', tile_kml_content)
                 if north_val and south_val and east_val and west_val:
-                    lats = [float(north_val.group(1)), float(south_val.group(1))]
-                    lons = [float(east_val.group(1)), float(west_val.group(1))]
-
-            if lons and lats:
-                north_coord = max(lats)
-                south_coord = min(lats)
-                east_coord = max(lons)
-                west_coord = min(lons)
-            else:
-                return jsonify({'status': 'error', 'message': 'Não foi possível ler as coordenadas do KMZ.'}), 400
+                    north_coord = float(north_val.group(1))
+                    south_coord = float(south_val.group(1))
+                    east_coord = float(east_val.group(1))
+                    west_coord = float(west_val.group(1))
+                    rotation_deg = 0.0
+                else:
+                    return jsonify({'status': 'error', 'message': 'Não foi possível ler as coordenadas do KMZ.'}), 400
 
             # Geração da imagem de pré-visualização de ALTA RESOLUÇÃO e ALTO CONTRASTE
             from PIL import Image, ImageEnhance, ImageDraw
@@ -866,7 +885,7 @@ def generate_adjust_kmz():
                     png_tiles = [n for n in names if n.endswith('.png') and n != 'preview.png']
                     levels = sorted(list(set([int(n.split('/')[0]) for n in png_tiles if n.split('/')[0].isdigit()])))
                     
-                    # Escolhe o nível ideal para alta resolução (nível 3 tem 64 tiles ~2224x952px, nível 4 tem 256 tiles ~4448x1904px)
+                    # Escolhe o nível ideal para alta resolução
                     target_lvl = 3
                     if 4 in levels:
                         target_lvl = 4
@@ -877,7 +896,6 @@ def generate_adjust_kmz():
                     
                     print(f"[Generate KMZ] Montando tiles do KMZ em Alta Resolução (Nível {target_lvl})...")
                     
-                    # Descobre tamanho do tile
                     sample_tile_name = [n for n in png_tiles if n.startswith(f'{target_lvl}/')][0]
                     sample_img = Image.open(io.BytesIO(z.read(sample_tile_name)))
                     tile_w, tile_h = sample_img.size
@@ -909,25 +927,21 @@ def generate_adjust_kmz():
                 return jsonify({'status': 'error', 'message': 'Nenhuma imagem pôde ser extraída do KMZ.'}), 400
 
             # Aplicar filtro de cor falsa (MAGENTA / VIOLETA VIVO) e aumento de contraste
-            # Garante que a imagem se destaque totalmente sobre o satélite verde do Google Earth
             arr = np.array(base_img, dtype=np.float32)
             alpha_mask = arr[:, :, 3] > 10
             
-            # Multiplicadores de cor: Realça Vermelho e Azul (Magenta), suprime Verde
-            arr[:, :, 0] = np.clip(arr[:, :, 0] * 1.5 + 50, 0, 255) # Red boost
-            arr[:, :, 1] = np.clip(arr[:, :, 1] * 0.15, 0, 255)     # Green suppress
-            arr[:, :, 2] = np.clip(arr[:, :, 2] * 1.3 + 40, 0, 255) # Blue boost
+            arr[:, :, 0] = np.clip(arr[:, :, 0] * 1.5 + 50, 0, 255)
+            arr[:, :, 1] = np.clip(arr[:, :, 1] * 0.15, 0, 255)
+            arr[:, :, 2] = np.clip(arr[:, :, 2] * 1.3 + 40, 0, 255)
             arr[~alpha_mask, 3] = 0
             
             img_tinted = Image.fromarray(arr.astype(np.uint8), 'RGBA')
             
-            # Aumentar contraste e nitidez
             enhancer = ImageEnhance.Contrast(img_tinted)
             img_tinted = enhancer.enhance(1.4)
             enhancer = ImageEnhance.Sharpness(img_tinted)
             img_tinted = enhancer.enhance(1.6)
             
-            # Adicionar contorno amarelo neon ao redor
             draw = ImageDraw.Draw(img_tinted)
             border_w = max(4, img_tinted.width // 300)
             for i in range(border_w):
@@ -939,7 +953,7 @@ def generate_adjust_kmz():
             img_byte_arr = io.BytesIO()
             img_tinted.save(img_byte_arr, format='PNG', optimize=True)
             preview_image_data = img_byte_arr.getvalue()
-            print(f"[Generate KMZ] KMZ de ajuste gerado com sucesso ({img_tinted.width}x{img_tinted.height}px - Magenta Neon).")
+            print(f"[Generate KMZ] KMZ de ajuste gerado ({img_tinted.width}x{img_tinted.height}px - Rot={rotation_deg:.2f}°).")
 
         # 2. Criar o novo KMZ simplificado para ajuste visual
         doc_kml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -956,6 +970,7 @@ def generate_adjust_kmz():
       <south>{south_coord:.8f}</south>
       <east>{east_coord:.8f}</east>
       <west>{west_coord:.8f}</west>
+      <rotation>{rotation_deg:.8f}</rotation>
     </LatLonBox>
   </GroundOverlay>
 </kml>"""
@@ -997,38 +1012,25 @@ def apply_visual_adjust():
         return jsonify({'status': 'error', 'message': 'O KMZ ajustado deve ser um arquivo .kmz válido.'}), 400
 
     try:
-        # 1. Extrair os limites geográficos (Bounding Box) do KMZ de origem
-        def extract_bounds_from_kmz(kmz_file_path):
+        # 1. Obter o centro geográfico original a partir do gx:LatLonQuad do KMZ original
+        def get_original_center(kmz_file_path):
             with zipfile.ZipFile(kmz_file_path, 'r') as z:
                 names = z.namelist()
-                # Prioriza doc.kml ou 0/0/0.kml
-                kml_candidates = []
-                if 'doc.kml' in names:
-                    kml_candidates.append('doc.kml')
+                root_kml = None
                 for n in names:
                     if n.endswith('0/0/0.kml'):
-                        kml_candidates.append(n)
-                for n in names:
-                    if n.lower().endswith('.kml') and n not in kml_candidates:
-                        kml_candidates.append(n)
+                        root_kml = n
+                        break
+                if not root_kml:
+                    kmls = [n for n in names if n.lower().endswith('.kml') and n != 'doc.kml']
+                    if kmls:
+                        kmls.sort(key=len)
+                        root_kml = kmls[0]
+                if not root_kml and 'doc.kml' in names:
+                    root_kml = 'doc.kml'
 
-                for kml_name in kml_candidates:
-                    content = z.read(kml_name).decode('utf-8', errors='ignore')
-                    
-                    # Tenta LatLonBox / LatLonAltBox
-                    north = re.search(r'<north>([^<]+)</north>', content)
-                    south = re.search(r'<south>([^<]+)</south>', content)
-                    east = re.search(r'<east>([^<]+)</east>', content)
-                    west = re.search(r'<west>([^<]+)</west>', content)
-                    
-                    if north and south and east and west:
-                        n = float(north.group(1))
-                        s = float(south.group(1))
-                        e = float(east.group(1))
-                        w = float(west.group(1))
-                        return {'north': n, 'south': s, 'east': e, 'west': w, 'center_lat': (n + s) / 2.0, 'center_lon': (e + w) / 2.0}
-
-                    # Tenta gx:LatLonQuad coordinates
+                if root_kml:
+                    content = z.read(root_kml).decode('utf-8', errors='ignore')
                     coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', content, re.DOTALL)
                     if coords_match:
                         lats, lons = [], []
@@ -1038,23 +1040,55 @@ def apply_visual_adjust():
                                 lons.append(float(parts[0]))
                                 lats.append(float(parts[1]))
                         if lats and lons:
-                            n, s = max(lats), min(lats)
-                            e, w = max(lons), min(lons)
-                            return {'north': n, 'south': s, 'east': e, 'west': w, 'center_lat': sum(lats)/len(lats), 'center_lon': sum(lons)/len(lons)}
-            return None
+                            return sum(lats)/len(lats), sum(lons)/len(lons)
+                    
+                    north = re.search(r'<north>([^<]+)</north>', content)
+                    south = re.search(r'<south>([^<]+)</south>', content)
+                    east = re.search(r'<east>([^<]+)</east>', content)
+                    west = re.search(r'<west>([^<]+)</west>', content)
+                    if north and south and east and west:
+                        return (float(north.group(1)) + float(south.group(1))) / 2.0, (float(east.group(1)) + float(west.group(1))) / 2.0
+            return None, None
 
-        orig_bounds = extract_bounds_from_kmz(original_kmz)
-        adj_bounds = extract_bounds_from_kmz(adjusted_kmz)
+        # 2. Obter o centro geográfico ajustado salvo pelo Google Earth Pro
+        def get_adjusted_center(kmz_file_path):
+            with zipfile.ZipFile(kmz_file_path, 'r') as z:
+                names = z.namelist()
+                kmls = [n for n in names if n.lower().endswith('.kml')]
+                if not kmls:
+                    return None, None
+                content = z.read(kmls[0]).decode('utf-8', errors='ignore')
+                
+                north = re.search(r'<north>([^<]+)</north>', content)
+                south = re.search(r'<south>([^<]+)</south>', content)
+                east = re.search(r'<east>([^<]+)</east>', content)
+                west = re.search(r'<west>([^<]+)</west>', content)
+                if north and south and east and west:
+                    return (float(north.group(1)) + float(south.group(1))) / 2.0, (float(east.group(1)) + float(west.group(1))) / 2.0
 
-        if not orig_bounds or not adj_bounds:
-            return jsonify({'status': 'error', 'message': 'Não foi possível extrair os limites de coordenadas dos arquivos KMZ.'}), 400
+                coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', content, re.DOTALL)
+                if coords_match:
+                    lats, lons = [], []
+                    for pt in coords_match.group(1).strip().split():
+                        parts = pt.split(',')
+                        if len(parts) >= 2:
+                            lons.append(float(parts[0]))
+                            lats.append(float(parts[1]))
+                    if lats and lons:
+                        return sum(lats)/len(lats), sum(lons)/len(lons)
+            return None, None
 
-        # 2. Calcular o deslocamento real exato entre o centro original e o centro ajustado
-        lat_shift_deg = adj_bounds['center_lat'] - orig_bounds['center_lat']
-        lon_shift_deg = adj_bounds['center_lon'] - orig_bounds['center_lon']
+        orig_c_lat, orig_c_lon = get_original_center(original_kmz)
+        adj_c_lat, adj_c_lon = get_adjusted_center(adjusted_kmz)
 
-        print(f"[Apply Adjust] Centro Orig: Lat={orig_bounds['center_lat']:.8f}, Lon={orig_bounds['center_lon']:.8f}")
-        print(f"[Apply Adjust] Centro Adj:  Lat={adj_bounds['center_lat']:.8f}, Lon={adj_bounds['center_lon']:.8f}")
+        if orig_c_lat is None or adj_c_lat is None:
+            return jsonify({'status': 'error', 'message': 'Não foi possível ler as coordenadas dos arquivos KMZ.'}), 400
+
+        lat_shift_deg = adj_c_lat - orig_c_lat
+        lon_shift_deg = adj_c_lon - orig_c_lon
+
+        print(f"[Apply Adjust] Centro Orig: Lat={orig_c_lat:.8f}, Lon={orig_c_lon:.8f}")
+        print(f"[Apply Adjust] Centro Adj:  Lat={adj_c_lat:.8f}, Lon={adj_c_lon:.8f}")
         print(f"[Apply Adjust] Deslocamento calculado: Lat Shift={lat_shift_deg:.8f}°, Lon Shift={lon_shift_deg:.8f}°")
 
         # 3. Criar o KMZ final ajustado
