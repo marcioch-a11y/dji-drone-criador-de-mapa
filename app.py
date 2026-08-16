@@ -340,7 +340,7 @@ def queue_add():
         'srt': data.get('srt'),
         'photos': data.get('photos'),
         'out': data.get('out'),
-        'interval': float(data.get('interval', 1.5)),
+        'interval': float(data.get('interval', 0.2)),
         'photo_interval': float(data.get('photo_interval', 2.0)),
         'filter': data.get('filter', '*.jpg'),
         'start': float(data.get('start', 0.0)),
@@ -505,7 +505,7 @@ def run_pipeline():
 
         if mode == 'video':
             video = data.get('video')
-            interval = data.get('interval', 1.5)
+            interval = data.get('interval', 0.2)
             if not video:
                 return jsonify({'status': 'error', 'message': 'Caminho do vídeo é obrigatório no modo vídeo.'}), 400
             cmd += ["--video", video, "--interval", str(interval)]
