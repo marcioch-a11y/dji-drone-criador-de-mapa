@@ -249,6 +249,7 @@ def run_webodm():
         filt = data.get('filter', '*.jpg')
         quality = data.get('quality', 'medium')
         resolution = data.get('resolution', 4.0)
+        kmz_name = data.get('kmz_name', '')
 
         if not photos or not out:
             return jsonify({'status': 'error', 'message': 'Parâmetros obrigatórios PHOTOS e OUT ausentes.'}), 400
@@ -289,6 +290,8 @@ def run_webodm():
                     "--quality", quality,
                     "--resolution", str(resolution)
                 ]
+                if kmz_name:
+                    cmd += ["--kmz-name", kmz_name]
                 
                 log_messages.append(f"[Orquestrador] Iniciando processo no NodeODM...")
                 print(f"[App] Executando comando: {' '.join(cmd)}")

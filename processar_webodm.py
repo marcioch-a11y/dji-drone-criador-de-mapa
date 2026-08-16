@@ -12,6 +12,7 @@ def main():
     parser.add_argument("--filter", default="*.jpg", help="Padrão de busca para filtrar arquivos (ex: DJI_20260610*.JPG). Padrão: *.jpg")
     parser.add_argument("--quality", default="medium", choices=["low", "medium", "high"], help="Qualidade do processamento (low, medium, high). Padrão: medium")
     parser.add_argument("--resolution", type=float, default=4.0, help="Resolução da ortofoto (cm/pixel). Padrão: 4.0")
+    parser.add_argument("--kmz-name", default="", help="Nome personalizado para o arquivo KMZ gerado (opcional)")
     
     args = parser.parse_args()
 
@@ -112,14 +113,22 @@ def main():
             if os.path.isfile(kmz_path):
                 print(f"   - Ortofoto Google Earth: {os.path.abspath(kmz_path)}")
                 
+                # Define o nome do arquivo final
+                target_filename = args.kmz_name.strip() if args.kmz_name else ""
+                if target_filename:
+                    if not target_filename.lower().endswith(".kmz"):
+                        target_filename += ".kmz"
+                else:
+                    target_filename = "odm_orthophoto.kmz"
+
                 # Salva / copia o KMZ em um subdiretório da pasta onde estão as fotos georreferenciadas
                 try:
                     import shutil
                     kmz_subfolder = os.path.join(args.photos, "kmz_mapa")
                     os.makedirs(kmz_subfolder, exist_ok=True)
-                    dest_kmz = os.path.join(kmz_subfolder, "odm_orthophoto.kmz")
+                    dest_kmz = os.path.join(kmz_subfolder, target_filename)
                     shutil.copy2(kmz_path, dest_kmz)
-                    print(f"   - KMZ salvo na pasta das fotos: {os.path.abspath(dest_kmz)}")
+                    print(f"   - KMZ identificado salvo na pasta das fotos: {os.path.abspath(dest_kmz)}")
                 except Exception as ex_copy:
                     print(f"   [Aviso ao copiar KMZ para pasta das fotos: {ex_copy}]")
 

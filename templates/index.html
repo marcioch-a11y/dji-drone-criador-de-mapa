@@ -671,6 +671,9 @@
                             <option value="high">Alta (Máximo Detalhe / Arquivo Pesado)</option>
                         </select>
                     </div>
+                <div class="form-group">
+                    <label for="kmzCustomName">Nome do Arquivo KMZ (Identificador)</label>
+                    <input type="text" id="kmzCustomName" placeholder="Ex: DJI_20260808130429_0036_mapa.kmz">
                 </div>
             </div>
 
@@ -1102,6 +1105,14 @@
                 // Define no campo de telemetria SRT caso ainda não esteja preenchido manualmente com outro arquivo
                 const srtInput = document.getElementById('srtPath');
                 srtInput.value = srtPath;
+
+                // Sugere automaticamente o nome do KMZ com base no nome do arquivo do vídeo
+                const baseNameWithExt = videoPath.split(/[\\/]/).pop();
+                const baseName = baseNameWithExt.substring(0, baseNameWithExt.lastIndexOf('.')) || baseNameWithExt;
+                const kmzInput = document.getElementById('kmzCustomName');
+                if (kmzInput) {
+                    kmzInput.value = `${baseName}_mapa.kmz`;
+                }
             }
         }
 
@@ -1262,7 +1273,8 @@
                 out: document.getElementById('outDir').value + '_webodm', // Salva na pasta adjacente
                 filter: currentMode === 'video' ? 'frame_*.jpg' : 'photo_*.jpg', // Filtra dependendo do modo
                 quality: document.getElementById('odmQuality').value,
-                resolution: parseFloat(document.getElementById('odmResolution').value) || 4.0
+                resolution: parseFloat(document.getElementById('odmResolution').value) || 4.0,
+                kmz_name: (document.getElementById('kmzCustomName')?.value || '').trim()
             };
 
 
