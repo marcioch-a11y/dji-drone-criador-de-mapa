@@ -996,6 +996,7 @@ def apply_visual_adjust():
     import tempfile
     import re
     import os
+    import math
 
     data = request.json or {}
     original_kmz = data.get('original_kmz')
@@ -1012,128 +1013,176 @@ def apply_visual_adjust():
         return jsonify({'status': 'error', 'message': 'O KMZ ajustado deve ser um arquivo .kmz válido.'}), 400
 
     try:
-        # 1. Obter o centro geográfico original a partir do gx:LatLonQuad do KMZ original
-        def get_original_center(kmz_file_path):
-            with zipfile.ZipFile(kmz_file_path, 'r') as z:
-                names = z.namelist()
-                root_kml = None
-                for n in names:
-                    if n.endswith('0/0/0.kml'):
-                        root_kml = n
-                        break
-                if not root_kml:
-                    kmls = [n for n in names if n.lower().endswith('.kml') and n != 'doc.kml']
-                    if kmls:
-                        kmls.sort(key=len)
-                        root_kml = kmls[0]
-                if not root_kml and 'doc.kml' in names:
-                    root_kml = 'doc.kml'
+        # 1. Extrair os parâmetros da caixa original do WebODM (Box 0)
+        with zipfile.ZipFile(original_kmz, 'r') as z:
+            names = z.namelist()
+            root_kml = None
+            for n in names:
+                if n.endswith('0/0/0.kml'):
+                    root_kml = n
+                    break
+            if not root_kml:
+                kmls = [n for n in names if n.lower().endswith('.kml') and n != 'doc.kml']
+                if kmls:
+                    kmls.sort(key=len)
+                    root_kml = kmls[0]
+            if not root_kml and 'doc.kml' in names:
+                root_kml = 'doc.kml'
 
-                if root_kml:
-                    content = z.read(root_kml).decode('utf-8', errors='ignore')
-                    coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', content, re.DOTALL)
-                    if coords_match:
-                        lats, lons = [], []
-                        for pt in coords_match.group(1).strip().split():
-                            parts = pt.split(',')
-                            if len(parts) >= 2:
-                                lons.append(float(parts[0]))
-                                lats.append(float(parts[1]))
-                        if lats and lons:
-                            return sum(lats)/len(lats), sum(lons)/len(lons)
-                    
-                    north = re.search(r'<north>([^<]+)</north>', content)
-                    south = re.search(r'<south>([^<]+)</south>', content)
-                    east = re.search(r'<east>([^<]+)</east>', content)
-                    west = re.search(r'<west>([^<]+)</west>', content)
-                    if north and south and east and west:
-                        return (float(north.group(1)) + float(south.group(1))) / 2.0, (float(east.group(1)) + float(west.group(1))) / 2.0
-            return None, None
+            if not root_kml:
+                return jsonify({'status': 'error', 'message': 'KML raiz não encontrado no KMZ original.'}), 400
 
-        # 2. Obter o centro geográfico ajustado salvo pelo Google Earth Pro
-        def get_adjusted_center(kmz_file_path):
-            with zipfile.ZipFile(kmz_file_path, 'r') as z:
-                names = z.namelist()
-                kmls = [n for n in names if n.lower().endswith('.kml')]
-                if not kmls:
-                    return None, None
-                content = z.read(kmls[0]).decode('utf-8', errors='ignore')
-                
-                north = re.search(r'<north>([^<]+)</north>', content)
-                south = re.search(r'<south>([^<]+)</south>', content)
-                east = re.search(r'<east>([^<]+)</east>', content)
-                west = re.search(r'<west>([^<]+)</west>', content)
-                if north and south and east and west:
-                    return (float(north.group(1)) + float(south.group(1))) / 2.0, (float(east.group(1)) + float(west.group(1))) / 2.0
+            txt_0 = z.read(root_kml).decode('utf-8', errors='ignore')
+            coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', txt_0, re.DOTALL)
+            if coords_match:
+                pts = coords_match.group(1).strip().split()
+                coords_0 = []
+                for pt in pts:
+                    parts = pt.split(',')
+                    if len(parts) >= 2:
+                        coords_0.append((float(parts[0]), float(parts[1])))
+                sw0, se0, ne0, nw0 = coords_0[0], coords_0[1], coords_0[2], coords_0[3]
+                c_lat_0 = (sw0[1] + se0[1] + ne0[1] + nw0[1]) / 4.0
+                c_lon_0 = (sw0[0] + se0[0] + ne0[0] + nw0[0]) / 4.0
+                cos0 = math.cos(math.radians(c_lat_0))
+                dx0 = (se0[0] - sw0[0]) * cos0
+                dy0 = se0[1] - sw0[1]
+                rot_0_rad = math.atan2(dy0, dx0)
+                w_lon_0 = math.sqrt(((se0[0] - sw0[0])*cos0)**2 + (se0[1] - sw0[1])**2) / cos0
+                h_lat_0 = math.sqrt(((nw0[0] - sw0[0])*cos0)**2 + (nw0[1] - sw0[1])**2)
+            else:
+                nm = re.search(r'<north>([^<]+)</north>', txt_0)
+                sm = re.search(r'<south>([^<]+)</south>', txt_0)
+                em = re.search(r'<east>([^<]+)</east>', txt_0)
+                wm = re.search(r'<west>([^<]+)</west>', txt_0)
+                if nm and sm and em and wm:
+                    n0, s0, e0, w0 = float(nm.group(1)), float(sm.group(1)), float(em.group(1)), float(wm.group(1))
+                    c_lat_0 = (n0 + s0) / 2.0
+                    c_lon_0 = (e0 + w0) / 2.0
+                    w_lon_0 = e0 - w0
+                    h_lat_0 = n0 - s0
+                    rot_0_rad = 0.0
+                    cos0 = math.cos(math.radians(c_lat_0))
+                else:
+                    return jsonify({'status': 'error', 'message': 'Não foi possível ler as coordenadas do KMZ original.'}), 400
 
-                coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', content, re.DOTALL)
-                if coords_match:
-                    lats, lons = [], []
-                    for pt in coords_match.group(1).strip().split():
-                        parts = pt.split(',')
-                        if len(parts) >= 2:
-                            lons.append(float(parts[0]))
-                            lats.append(float(parts[1]))
-                    if lats and lons:
-                        return sum(lats)/len(lats), sum(lons)/len(lons)
-            return None, None
+        # 2. Extrair os parâmetros da caixa ajustada salva pelo Google Earth (Box 1)
+        with zipfile.ZipFile(adjusted_kmz, 'r') as z:
+            names = z.namelist()
+            kmls = [n for n in names if n.lower().endswith('.kml')]
+            if not kmls:
+                return jsonify({'status': 'error', 'message': 'Nenhum KML encontrado no KMZ ajustado.'}), 400
+            txt_adj = z.read(kmls[0]).decode('utf-8', errors='ignore')
+            nm = re.search(r'<north>([^<]+)</north>', txt_adj)
+            sm = re.search(r'<south>([^<]+)</south>', txt_adj)
+            em = re.search(r'<east>([^<]+)</east>', txt_adj)
+            wm = re.search(r'<west>([^<]+)</west>', txt_adj)
+            if not (nm and sm and em and wm):
+                return jsonify({'status': 'error', 'message': 'Coordenadas não encontradas no KMZ ajustado.'}), 400
 
-        orig_c_lat, orig_c_lon = get_original_center(original_kmz)
-        adj_c_lat, adj_c_lon = get_adjusted_center(adjusted_kmz)
+            n1, s1, e1, w1 = float(nm.group(1)), float(sm.group(1)), float(em.group(1)), float(wm.group(1))
+            rot1_m = re.search(r'<rotation>([^<]+)</rotation>', txt_adj)
+            rot_1_deg = float(rot1_m.group(1)) if rot1_m else math.degrees(rot_0_rad)
 
-        if orig_c_lat is None or adj_c_lat is None:
-            return jsonify({'status': 'error', 'message': 'Não foi possível ler as coordenadas dos arquivos KMZ.'}), 400
+        c_lat_1 = (n1 + s1) / 2.0
+        c_lon_1 = (e1 + w1) / 2.0
+        w_lon_1 = e1 - w1
+        h_lat_1 = n1 - s1
+        rot_1_rad = math.radians(rot_1_deg)
+        cos1 = math.cos(math.radians(c_lat_1))
 
-        lat_shift_deg = adj_c_lat - orig_c_lat
-        lon_shift_deg = adj_c_lon - orig_c_lon
+        # 3. Função de Transformação Afim completa (Translação + Escala + Rotação)
+        def transform_point(lon, lat):
+            u = (lon - c_lon_0) * cos0
+            v = (lat - c_lat_0)
+            u_loc = u * math.cos(-rot_0_rad) - v * math.sin(-rot_0_rad)
+            v_loc = u * math.sin(-rot_0_rad) + v * math.cos(-rot_0_rad)
+            sx = u_loc / (w_lon_0 * cos0)
+            sy = v_loc / h_lat_0
+            u_prime_loc = sx * (w_lon_1 * cos1)
+            v_prime_loc = sy * h_lat_1
+            u_prime = u_prime_loc * math.cos(rot_1_rad) - v_prime_loc * math.sin(rot_1_rad)
+            v_prime = u_prime_loc * math.sin(rot_1_rad) + v_prime_loc * math.cos(rot_1_rad)
+            return c_lon_1 + u_prime / cos1, c_lat_1 + v_prime
 
-        print(f"[Apply Adjust] Centro Orig: Lat={orig_c_lat:.8f}, Lon={orig_c_lon:.8f}")
-        print(f"[Apply Adjust] Centro Adj:  Lat={adj_c_lat:.8f}, Lon={adj_c_lon:.8f}")
-        print(f"[Apply Adjust] Deslocamento calculado: Lat Shift={lat_shift_deg:.8f}°, Lon Shift={lon_shift_deg:.8f}°")
-
-        # 3. Criar o KMZ final ajustado
+        # 4. Criar o KMZ final ajustado
         dir_name = os.path.dirname(original_kmz)
         base_name = os.path.basename(original_kmz)
         name_part, ext_part = os.path.splitext(base_name)
         output_kmz_path = os.path.join(dir_name, f"{name_part}_ajustado_visual{ext_part}")
 
-        def shift_kml_content(kml_text, lat_s, lon_s):
-            def shift_tag(tag, shift):
-                pattern = re.compile(rf'<{tag}>([^<]+)</{tag}>')
-                def repl(match):
-                    try:
-                        val = float(match.group(1)) + shift
-                        return f'<{tag}>{val:.8f}</{tag}>'
-                    except ValueError:
-                        return match.group(0)
-                return pattern, repl
+        def transform_kml_content(kml_text):
+            # A. Transformar gx:LatLonQuad
+            def repl_quad(match):
+                coords_str = match.group(1)
+                new_pts = []
+                for pt in coords_str.strip().split():
+                    parts = pt.split(',')
+                    if len(parts) >= 2:
+                        try:
+                            lon = float(parts[0])
+                            lat = float(parts[1])
+                            alt = parts[2] if len(parts) > 2 else '0'
+                            nlon, nlat = transform_point(lon, lat)
+                            new_pts.append(f'{nlon:.8f},{nlat:.8f},{alt}')
+                        except ValueError:
+                            new_pts.append(pt)
+                    else:
+                        new_pts.append(pt)
+                return f'<gx:LatLonQuad>\n\t\t\t\t<coordinates>\n\t\t\t\t\t' + '\n\t\t\t\t\t'.join(new_pts) + '\n\t\t\t\t</coordinates>\n\t\t\t</gx:LatLonQuad>'
 
-            for tag in ['north', 'south', 'latitude']:
-                pattern, repl = shift_tag(tag, lat_s)
-                kml_text = pattern.sub(repl, kml_text)
-                
-            for tag in ['east', 'west', 'longitude']:
-                pattern, repl = shift_tag(tag, lon_s)
-                kml_text = pattern.sub(repl, kml_text)
-                
-            def shift_coords_str(match):
+            kml_text = re.sub(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>\s*</gx:LatLonQuad>', repl_quad, kml_text)
+
+            # B. Transformar LatLonAltBox e LatLonBox
+            def repl_box(match):
+                tag = match.group(1)
+                inner = match.group(2)
+                nm = re.search(r'<north>([^<]+)</north>', inner)
+                sm = re.search(r'<south>([^<]+)</south>', inner)
+                em = re.search(r'<east>([^<]+)</east>', inner)
+                wm = re.search(r'<west>([^<]+)</west>', inner)
+                if nm and sm and em and wm:
+                    try:
+                        n, s, e, w = float(nm.group(1)), float(sm.group(1)), float(em.group(1)), float(wm.group(1))
+                        p_sw = transform_point(w, s)
+                        p_se = transform_point(e, s)
+                        p_ne = transform_point(e, n)
+                        p_nw = transform_point(w, n)
+                        new_n = max(p_sw[1], p_se[1], p_ne[1], p_nw[1])
+                        new_s = min(p_sw[1], p_se[1], p_ne[1], p_nw[1])
+                        new_e = max(p_sw[0], p_se[0], p_ne[0], p_nw[0])
+                        new_w = min(p_sw[0], p_se[0], p_ne[0], p_nw[0])
+                        new_inner = re.sub(r'<north>[^<]+</north>', f'<north>{new_n:.8f}</north>', inner)
+                        new_inner = re.sub(r'<south>[^<]+</south>', f'<south>{new_s:.8f}</south>', new_inner)
+                        new_inner = re.sub(r'<east>[^<]+</east>', f'<east>{new_e:.8f}</east>', new_inner)
+                        new_inner = re.sub(r'<west>[^<]+</west>', f'<west>{new_w:.8f}</west>', new_inner)
+                        return f'<{tag}>{new_inner}</{tag}>'
+                    except ValueError:
+                        pass
+                return match.group(0)
+
+            kml_text = re.sub(r'<(LatLonAltBox|LatLonBox)>([\s\S]*?)<\/\1>', repl_box, kml_text)
+
+            # C. Transformar Point/coordinates se houver
+            def repl_point(match):
                 coords_raw = match.group(1)
                 new_coords = []
                 for pt in coords_raw.strip().split():
                     parts = pt.split(',')
                     if len(parts) >= 2:
                         try:
-                            lon = float(parts[0]) + lon_s
-                            lat = float(parts[1]) + lat_s
+                            lon = float(parts[0])
+                            lat = float(parts[1])
                             alt = parts[2] if len(parts) > 2 else '0'
-                            new_coords.append(f"{lon:.8f},{lat:.8f},{alt}")
+                            nlon, nlat = transform_point(lon, lat)
+                            new_coords.append(f'{nlon:.8f},{nlat:.8f},{alt}')
                         except ValueError:
                             new_coords.append(pt)
                     else:
                         new_coords.append(pt)
-                return f"<coordinates>{' '.join(new_coords)}</coordinates>"
+                return f"<Point>\n\t\t\t\t<coordinates>{' '.join(new_coords)}</coordinates>\n\t\t\t</Point>"
 
-            kml_text = re.sub(r'<coordinates>([^<]+)</coordinates>', shift_coords_str, kml_text)
+            kml_text = re.sub(r'<Point>\s*<coordinates>([^<]+)</coordinates>\s*</Point>', repl_point, kml_text)
             return kml_text
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1148,7 +1197,7 @@ def apply_visual_adjust():
                         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                             content = f.read()
                             
-                        content_updated = shift_kml_content(content, lat_shift_deg, lon_shift_deg)
+                        content_updated = transform_kml_content(content)
                         
                         with open(file_path, 'w', encoding='utf-8') as f:
                             f.write(content_updated)
@@ -1161,9 +1210,10 @@ def apply_visual_adjust():
                         arcname = os.path.relpath(file_path, temp_dir)
                         zip_out.write(file_path, arcname)
 
+        print(f"[Apply Adjust] Sucesso! Transformacao Afim aplicada em {kml_count} arquivos KML.")
         return jsonify({
             'status': 'success',
-            'message': f'Ajustado {kml_count} arquivos KML. Deslocamento aplicado: lat={lat_shift_deg:.8f}°, lon={lon_shift_deg:.8f}°',
+            'message': f'Ajustado {kml_count} arquivos KML com Transformação Afim (Translação, Escala e Rotação).',
             'output_path': output_kmz_path
         })
     except Exception as e:
