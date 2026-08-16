@@ -1873,7 +1873,8 @@
             });
         }
 
-        // Inicializa o pooling de status na carga inicial para verificar se há alguma tarefa rodando
+        // Inicializa o streaming de logs e o polling de status na carga inicial
+        initLogStream();
         pollStatus();
     </script>
 </body>

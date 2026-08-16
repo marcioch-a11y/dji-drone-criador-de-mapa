@@ -90,7 +90,7 @@ def main():
                 if status != last_status or progress != last_progress:
                     status_name = status.name if hasattr(status, 'name') else str(status)
                     progress_str = f"{progress}%" if progress is not None else "Calculando..."
-                    print(f"      [Status]: {status_name.upper()} | [Progresso]: {progress_str}")
+                    print(f"      [Status]: {status_name.upper()} | [Progresso]: {progress_str}", flush=True)
                     last_status = status
                     last_progress = progress
                 
