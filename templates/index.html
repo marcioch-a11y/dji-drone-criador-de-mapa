@@ -841,7 +841,8 @@
                     <button type="button" id="btnWebODM" class="btn btn-green" onclick="startWebODM()">
                         <span>🗺️</span> Apenas WebODM
                     </button>
-                <button type="button" id="btnStopAction" class="btn" style="display: none; background: #ef4444; box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);" onclick="stopAllProcessing()">
+                </div>
+                <button type="button" id="btnStopAction" class="btn" style="background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); box-shadow: none;" onclick="stopAllProcessing()">
                     <span>🛑</span> Parar Tudo Imediatamente
                 </button>
                 <a href="/viewer-3d" target="_blank" class="btn" style="background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%); display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; color: white; margin-top: 2px; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);">
@@ -1535,7 +1536,6 @@
             const badge = document.getElementById('statusBadge');
             const btnGeoref = document.getElementById('btnGeoref');
             const btnWebODM = document.getElementById('btnWebODM');
-            
             const btnStopGlobal = document.getElementById('btnStopGlobal');
             const btnStopAction = document.getElementById('btnStopAction');
             
@@ -1544,15 +1544,35 @@
                 badge.textContent = statusText || 'Processando...';
                 btnGeoref.disabled = true;
                 btnWebODM.disabled = true;
-                if (btnStopGlobal) btnStopGlobal.style.display = 'inline-flex';
-                if (btnStopAction) btnStopAction.style.display = 'flex';
+                
+                if (btnStopGlobal) {
+                    btnStopGlobal.style.display = 'inline-flex';
+                    btnStopGlobal.disabled = false;
+                    btnStopGlobal.style.opacity = '1';
+                }
+                if (btnStopAction) {
+                    btnStopAction.disabled = false;
+                    btnStopAction.style.background = '#ef4444';
+                    btnStopAction.style.color = '#ffffff';
+                    btnStopAction.style.boxShadow = '0 4px 14px rgba(239, 68, 68, 0.4)';
+                    btnStopAction.style.opacity = '1';
+                }
             } else {
                 badge.className = 'status-badge';
                 badge.textContent = 'Pronto';
                 btnGeoref.disabled = false;
                 btnWebODM.disabled = false;
-                if (btnStopGlobal) btnStopGlobal.style.display = 'none';
-                if (btnStopAction) btnStopAction.style.display = 'none';
+                
+                if (btnStopGlobal) {
+                    btnStopGlobal.style.display = 'none';
+                }
+                if (btnStopAction) {
+                    btnStopAction.disabled = true;
+                    btnStopAction.style.background = 'rgba(255, 255, 255, 0.05)';
+                    btnStopAction.style.color = 'var(--text-muted)';
+                    btnStopAction.style.boxShadow = 'none';
+                    btnStopAction.style.opacity = '0.5';
+                }
             }
         }
 
