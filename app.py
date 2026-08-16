@@ -997,84 +997,67 @@ def apply_visual_adjust():
         return jsonify({'status': 'error', 'message': 'O KMZ ajustado deve ser um arquivo .kmz válido.'}), 400
 
     try:
-        # 1. Obter coordenadas originais do KMZ de ajuste
-        orig_coords = []
-        with zipfile.ZipFile(original_kmz, 'r') as z:
-            names = z.namelist()
-            root_tile_kml_name = None
-            for name in names:
-                if name.endswith('0/0/0.kml'):
-                    root_tile_kml_name = name
-                    break
-            if not root_tile_kml_name:
-                kmls = [n for n in names if n.lower().endswith('.kml') and n != 'doc.kml']
-                if kmls:
-                    kmls.sort(key=len)
-                    root_tile_kml_name = kmls[0]
-            
-            tile_kml_content = z.read(root_tile_kml_name).decode('utf-8', errors='ignore')
-            coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', tile_kml_content, re.DOTALL)
-            if coords_match:
-                orig_points_str = coords_match.group(1).strip().split()
-                for pt in orig_points_str:
-                    parts = pt.split(',')
-                    if len(parts) >= 2:
-                        orig_coords.append((float(parts[0]), float(parts[1])))
-            else:
-                north = float(re.search(r'<north>([^<]+)</north>', tile_kml_content).group(1))
-                south = float(re.search(r'<south>([^<]+)</south>', tile_kml_content).group(1))
-                east = float(re.search(r'<east>([^<]+)</east>', tile_kml_content).group(1))
-                west = float(re.search(r'<west>([^<]+)</west>', tile_kml_content).group(1))
-                orig_coords = [
-                    (west, south),
-                    (east, south),
-                    (east, north),
-                    (west, north)
-                ]
+        # 1. Extrair os limites geográficos (Bounding Box) do KMZ de origem
+        def extract_bounds_from_kmz(kmz_file_path):
+            with zipfile.ZipFile(kmz_file_path, 'r') as z:
+                names = z.namelist()
+                # Prioriza doc.kml ou 0/0/0.kml
+                kml_candidates = []
+                if 'doc.kml' in names:
+                    kml_candidates.append('doc.kml')
+                for n in names:
+                    if n.endswith('0/0/0.kml'):
+                        kml_candidates.append(n)
+                for n in names:
+                    if n.lower().endswith('.kml') and n not in kml_candidates:
+                        kml_candidates.append(n)
 
-        # 2. Obter coordenadas ajustadas do KMZ que o usuário salvou do Google Earth
-        adj_coords = []
-        with zipfile.ZipFile(adjusted_kmz, 'r') as z:
-            names = z.namelist()
-            kml_name = [n for n in names if n.lower().endswith('.kml')][0]
-            adjusted_kml_content = z.read(kml_name).decode('utf-8', errors='ignore')
-            
-            coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', adjusted_kml_content, re.DOTALL)
-            if coords_match:
-                adj_points_str = coords_match.group(1).strip().split()
-                for pt in adj_points_str:
-                    parts = pt.split(',')
-                    if len(parts) >= 2:
-                        adj_coords.append((float(parts[0]), float(parts[1])))
-            else:
-                north = re.search(r'<north>([^<]+)</north>', adjusted_kml_content)
-                south = re.search(r'<south>([^<]+)</south>', adjusted_kml_content)
-                east = re.search(r'<east>([^<]+)</east>', adjusted_kml_content)
-                west = re.search(r'<west>([^<]+)</west>', adjusted_kml_content)
-                
-                if north and south and east and west:
-                    n, s, e, w = float(north.group(1)), float(south.group(1)), float(east.group(1)), float(west.group(1))
-                    adj_coords = [
-                        (w, s),
-                        (e, s),
-                        (e, n),
-                        (w, n)
-                    ]
-                else:
-                    return jsonify({'status': 'error', 'message': 'Não foi possível encontrar as coordenadas ajustadas no KMZ salvo.'}), 400
+                for kml_name in kml_candidates:
+                    content = z.read(kml_name).decode('utf-8', errors='ignore')
+                    
+                    # Tenta LatLonBox / LatLonAltBox
+                    north = re.search(r'<north>([^<]+)</north>', content)
+                    south = re.search(r'<south>([^<]+)</south>', content)
+                    east = re.search(r'<east>([^<]+)</east>', content)
+                    west = re.search(r'<west>([^<]+)</west>', content)
+                    
+                    if north and south and east and west:
+                        n = float(north.group(1))
+                        s = float(south.group(1))
+                        e = float(east.group(1))
+                        w = float(west.group(1))
+                        return {'north': n, 'south': s, 'east': e, 'west': w, 'center_lat': (n + s) / 2.0, 'center_lon': (e + w) / 2.0}
 
-        # Verificar se temos o mesmo número de pontos
-        if len(orig_coords) != len(adj_coords) or len(orig_coords) < 4:
-            return jsonify({'status': 'error', 'message': 'Estrutura de coordenadas incompatível.'}), 400
+                    # Tenta gx:LatLonQuad coordinates
+                    coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', content, re.DOTALL)
+                    if coords_match:
+                        lats, lons = [], []
+                        for pt in coords_match.group(1).strip().split():
+                            parts = pt.split(',')
+                            if len(parts) >= 2:
+                                lons.append(float(parts[0]))
+                                lats.append(float(parts[1]))
+                        if lats and lons:
+                            n, s = max(lats), min(lats)
+                            e, w = max(lons), min(lons)
+                            return {'north': n, 'south': s, 'east': e, 'west': w, 'center_lat': sum(lats)/len(lats), 'center_lon': sum(lons)/len(lons)}
+            return None
 
-        # 3. Calcular deslocamento médio
-        lon_shifts = [adj[0] - orig[0] for adj, orig in zip(adj_coords, orig_coords)]
-        lat_shifts = [adj[1] - orig[1] for adj, orig in zip(adj_coords, orig_coords)]
-        
-        lon_shift_deg = sum(lon_shifts) / len(lon_shifts)
-        lat_shift_deg = sum(lat_shifts) / len(lat_shifts)
+        orig_bounds = extract_bounds_from_kmz(original_kmz)
+        adj_bounds = extract_bounds_from_kmz(adjusted_kmz)
 
-        # 4. Criar o KMZ final ajustado
+        if not orig_bounds or not adj_bounds:
+            return jsonify({'status': 'error', 'message': 'Não foi possível extrair os limites de coordenadas dos arquivos KMZ.'}), 400
+
+        # 2. Calcular o deslocamento real exato entre o centro original e o centro ajustado
+        lat_shift_deg = adj_bounds['center_lat'] - orig_bounds['center_lat']
+        lon_shift_deg = adj_bounds['center_lon'] - orig_bounds['center_lon']
+
+        print(f"[Apply Adjust] Centro Orig: Lat={orig_bounds['center_lat']:.8f}, Lon={orig_bounds['center_lon']:.8f}")
+        print(f"[Apply Adjust] Centro Adj:  Lat={adj_bounds['center_lat']:.8f}, Lon={adj_bounds['center_lon']:.8f}")
+        print(f"[Apply Adjust] Deslocamento calculado: Lat Shift={lat_shift_deg:.8f}°, Lon Shift={lon_shift_deg:.8f}°")
+
+        # 3. Criar o KMZ final ajustado
         dir_name = os.path.dirname(original_kmz)
         base_name = os.path.basename(original_kmz)
         name_part, ext_part = os.path.splitext(base_name)
