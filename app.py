@@ -1311,19 +1311,83 @@ def generate_photos_kml():
         return jsonify({'status': 'error', 'message': f'Erro ao salvar arquivo KML: {str(e)}'}), 500
 
 
+def _extract_kmz_image_and_coords(kmz_path):
+    """Auxiliar para extrair a imagem de alta resolução e as 4 coordenadas [SW, SE, NE, NW] de um KMZ."""
+    import zipfile
+    import io
+    import re
+    import numpy as np
+    from PIL import Image
+
+    with zipfile.ZipFile(kmz_path, 'r') as z:
+        names = z.namelist()
+        root_kml = '0/0/0.kml' if '0/0/0.kml' in names else [n for n in names if n.endswith('.kml')][0]
+        txt = z.read(root_kml).decode('utf-8')
+        quad = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)', txt, re.DOTALL)
+        if quad:
+            pts = quad.group(1).strip().split()
+            coords = []
+            for p in pts:
+                parts = p.split(',')
+                coords.append((float(parts[0]), float(parts[1])))
+            sw, se, ne, nw = coords[0], coords[1], coords[2], coords[3]
+        else:
+            nm = float(re.search(r'<north>([^<]+)</north>', txt).group(1))
+            sm = float(re.search(r'<south>([^<]+)</south>', txt).group(1))
+            em = float(re.search(r'<east>([^<]+)</east>', txt).group(1))
+            wm = float(re.search(r'<west>([^<]+)</west>', txt).group(1))
+            sw, se, ne, nw = (wm, sm), (em, sm), (em, nm), (wm, nm)
+
+        png_tiles = [n for n in names if n.endswith('.png') and n != 'preview.png']
+        levels = sorted(list(set([int(n.split('/')[0]) for n in png_tiles if n.split('/')[0].isdigit()])))
+        
+        if levels:
+            target_lvl = 3 if 3 in levels else max(levels)
+            sample = [n for n in png_tiles if n.startswith(f'{target_lvl}/')][0]
+            s_img = Image.open(io.BytesIO(z.read(sample)))
+            tw, th = s_img.size
+            num_t = 2 ** target_lvl
+            stitched = Image.new('RGBA', (tw * num_t, th * num_t), (0, 0, 0, 0))
+            for col in range(num_t):
+                for row in range(num_t):
+                    tname = f'{target_lvl}/{col}/{row}.png'
+                    if tname in names:
+                        data = z.read(tname)
+                        if len(data) > 0:
+                            timg = Image.open(io.BytesIO(data)).convert('RGBA')
+                            stitched.paste(timg, (col * tw, (num_t - 1 - row) * th))
+            img_rgba = stitched
+        elif 'preview.png' in names:
+            img_rgba = Image.open(io.BytesIO(z.read('preview.png'))).convert('RGBA')
+        else:
+            first_png = [n for n in names if n.endswith('.png')][0]
+            img_rgba = Image.open(io.BytesIO(z.read(first_png))).convert('RGBA')
+            
+        return np.array(img_rgba), [sw, se, ne, nw]
+
+
 @app.route('/api/merge-kmz', methods=['POST'])
 def merge_kmz():
     """
-    Mescla 2 ou mais arquivos KMZ em um único arquivo KMZ unificado,
-    preservando as pirâmides de alta resolução de cada um e agrupando em pastas no Google Earth.
+    Mescla 2 ou mais arquivos KMZ.
+    Suporta dois modos:
+      - 'seamless' (Padrão): Funde as imagens raster com homografia e suavização de bordas (feathering),
+                             gerando uma imagem única contínua sem nenhum pisca-pisca (Z-fighting).
+      - 'layers': Agrupa as pirâmides originais em pastas com NetworkLink.
     """
     import zipfile
     import tempfile
+    import io
+    import math
     import os
+    import cv2
+    import numpy as np
+    from PIL import Image
 
     data = request.json or {}
     kmz_paths = data.get('kmz_paths', [])
     output_name = data.get('output_name', '').strip()
+    merge_mode = data.get('mode', 'seamless')  # 'seamless' ou 'layers'
 
     if not kmz_paths or len(kmz_paths) < 2:
         return jsonify({'status': 'error', 'message': 'Selecione pelo menos 2 arquivos KMZ para unir.'}), 400
@@ -1340,32 +1404,142 @@ def merge_kmz():
     try:
         first_dir = os.path.dirname(valid_paths[0])
         if not output_name:
-            output_name = "mapa_unificado.kmz"
+            output_name = "mapa_unificado_fundido.kmz" if merge_mode == 'seamless' else "mapa_unificado.kmz"
         if not output_name.lower().endswith('.kmz'):
             output_name += ".kmz"
 
         output_kmz_path = os.path.join(first_dir, output_name)
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            folders_kml = []
+        if merge_mode == 'seamless':
+            # === FUSÃO RASTER REAL (SEAMLESS MOSAIC COM FEATHERING) ===
+            maps_data = []
+            all_corners = []
             
-            for idx, kmz_file in enumerate(valid_paths, start=1):
-                subfolder = f"map_{idx}"
-                sub_dir = os.path.join(temp_dir, subfolder)
-                os.makedirs(sub_dir, exist_ok=True)
+            for p in valid_paths:
+                arr, corners = _extract_kmz_image_and_coords(p)
+                maps_data.append((arr, corners))
+                all_corners.extend(corners)
                 
-                with zipfile.ZipFile(kmz_file, 'r') as z:
-                    z.extractall(sub_dir)
+            all_lons = [c[0] for c in all_corners]
+            all_lats = [c[1] for c in all_corners]
+
+            min_lon, max_lon = min(all_lons), max(all_lons)
+            min_lat, max_lat = min(all_lats), max(all_lats)
+
+            max_dim = 4096
+            aspect = ((max_lon - min_lon) * math.cos(math.radians((min_lat + max_lat)/2.0))) / max(1e-8, (max_lat - min_lat))
+            if aspect >= 1.0:
+                global_w = max_dim
+                global_h = max(256, int(max_dim / aspect))
+            else:
+                global_h = max_dim
+                global_w = max(256, int(max_dim * aspect))
+
+            accum_color = np.zeros((global_h, global_w, 3), dtype=np.float32)
+            accum_weight = np.zeros((global_h, global_w), dtype=np.float32)
+
+            def lonlat_to_pixel(lon, lat):
+                x = (lon - min_lon) / (max_lon - min_lon) * (global_w - 1)
+                y = (max_lat - lat) / (max_lat - min_lat) * (global_h - 1)
+                return x, y
+
+            for arr, (sw, se, ne, nw) in maps_data:
+                h, w = arr.shape[:2]
+                src_pts = np.float32([
+                    [0, h - 1],
+                    [w - 1, h - 1],
+                    [w - 1, 0],
+                    [0, 0]
+                ])
+                dst_pts = np.float32([
+                    lonlat_to_pixel(sw[0], sw[1]),
+                    lonlat_to_pixel(se[0], se[1]),
+                    lonlat_to_pixel(ne[0], ne[1]),
+                    lonlat_to_pixel(nw[0], nw[1])
+                ])
+                
+                M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+                warped_rgba = cv2.warpPerspective(arr, M, (global_w, global_h), flags=cv2.INTER_LINEAR)
+                
+                alpha = warped_rgba[:, :, 3] / 255.0
+                valid_mask = (alpha > 0.05).astype(np.uint8)
+                
+                if np.any(valid_mask):
+                    dist = cv2.distanceTransform(valid_mask, cv2.DIST_L2, 5)
+                    max_d = np.max(dist)
+                    weight = (np.clip(dist / min(max_d, 25.0), 0.0, 1.0) if max_d > 0 else 1.0) * alpha
+                    bgr = warped_rgba[:, :, :3].astype(np.float32)
+                    for c in range(3):
+                        accum_color[:, :, c] += bgr[:, :, c] * weight
+                    accum_weight += weight
+
+            fused_mask = accum_weight > 0.001
+            fused_bgr = np.zeros((global_h, global_w, 3), dtype=np.uint8)
+            for c in range(3):
+                fused_bgr[fused_mask, c] = np.clip(accum_color[fused_mask, c] / accum_weight[fused_mask], 0, 255).astype(np.uint8)
+
+            fused_alpha = np.clip(accum_weight * 255.0, 0, 255).astype(np.uint8)
+            fused_alpha[~fused_mask] = 0
+
+            fused_rgba = cv2.merge([fused_bgr[:, :, 0], fused_bgr[:, :, 1], fused_bgr[:, :, 2], fused_alpha])
+            fused_img = Image.fromarray(cv2.cvtColor(fused_rgba, cv2.COLOR_BGRA2RGBA))
+
+            doc_title = os.path.splitext(output_name)[0]
+            doc_kml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>{doc_title}</name>
+    <GroundOverlay>
+      <name>{doc_title} (Mosaico Fundido)</name>
+      <Icon>
+        <href>files/mosaico_fundido.png</href>
+      </Icon>
+      <LatLonBox>
+        <north>{max_lat:.8f}</north>
+        <south>{min_lat:.8f}</south>
+        <east>{max_lon:.8f}</east>
+        <west>{min_lon:.8f}</west>
+        <rotation>0.0</rotation>
+      </LatLonBox>
+    </GroundOverlay>
+  </Document>
+</kml>"""
+
+            img_bytes = io.BytesIO()
+            fused_img.save(img_bytes, format='PNG', optimize=True)
+
+            with zipfile.ZipFile(output_kmz_path, 'w', zipfile.ZIP_DEFLATED) as zout:
+                zout.writestr('doc.kml', doc_kml)
+                zout.writestr('files/mosaico_fundido.png', img_bytes.getvalue())
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Fundidos {len(valid_paths)} mapas KMZ em um Mosaico Contínuo sem emendas e sem pisca-pisca!',
+                'output_path': output_kmz_path
+            })
+
+        else:
+            # === MODO CAMADAS INDIVIDUAIS (MULTI-LAYER NETWORKLINK) ===
+            with tempfile.TemporaryDirectory() as temp_dir:
+                folders_kml = []
+                
+                for idx, kmz_file in enumerate(valid_paths, start=1):
+                    subfolder = f"map_{idx}"
+                    sub_dir = os.path.join(temp_dir, subfolder)
+                    os.makedirs(sub_dir, exist_ok=True)
                     
-                base_name = os.path.splitext(os.path.basename(kmz_file))[0]
-                
-                entry_kml = "doc.kml"
-                if not os.path.exists(os.path.join(sub_dir, "doc.kml")):
-                    kmls = [f for f in os.listdir(sub_dir) if f.lower().endswith('.kml')]
-                    if kmls:
-                        entry_kml = kmls[0]
+                    with zipfile.ZipFile(kmz_file, 'r') as z:
+                        z.extractall(sub_dir)
                         
-                folders_kml.append(f"""    <Folder>
+                    base_name = os.path.splitext(os.path.basename(kmz_file))[0]
+                    
+                    entry_kml = "doc.kml"
+                    if not os.path.exists(os.path.join(sub_dir, "doc.kml")):
+                        kmls = [f for f in os.listdir(sub_dir) if f.lower().endswith('.kml')]
+                        if kmls:
+                            entry_kml = kmls[0]
+                            
+                    folders_kml.append(f"""    <Folder>
       <name>{base_name}</name>
       <open>1</open>
       <NetworkLink>
@@ -1376,8 +1550,8 @@ def merge_kmz():
       </NetworkLink>
     </Folder>""")
 
-            doc_title = os.path.splitext(output_name)[0]
-            master_doc = f"""<?xml version="1.0" encoding="UTF-8"?>
+                doc_title = os.path.splitext(output_name)[0]
+                master_doc = f"""<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
     <name>{doc_title}</name>
@@ -1386,25 +1560,25 @@ def merge_kmz():
   </Document>
 </kml>"""
 
-            with open(os.path.join(temp_dir, "doc.kml"), 'w', encoding='utf-8') as f_doc:
-                f_doc.write(master_doc)
+                with open(os.path.join(temp_dir, "doc.kml"), 'w', encoding='utf-8') as f_doc:
+                    f_doc.write(master_doc)
 
-            with zipfile.ZipFile(output_kmz_path, 'w', zipfile.ZIP_DEFLATED) as zip_out:
-                for root, dirs, files in os.walk(temp_dir):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        arcname = os.path.relpath(file_path, temp_dir)
-                        zip_out.write(file_path, arcname)
+                with zipfile.ZipFile(output_kmz_path, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+                    for root, dirs, files in os.walk(temp_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.relpath(file_path, temp_dir)
+                            zip_out.write(file_path, arcname)
 
-        return jsonify({
-            'status': 'success',
-            'message': f'Unificados {len(valid_paths)} mapas KMZ em um único arquivo com sucesso!',
-            'output_path': output_kmz_path
-        })
+            return jsonify({
+                'status': 'success',
+                'message': f'Unificados {len(valid_paths)} mapas KMZ em camadas com sucesso!',
+                'output_path': output_kmz_path
+            })
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'status': 'error', 'message': f'Erro ao unir arquivos KMZ: {str(e)}'}), 500
+        return jsonify({'status': 'error', 'message': f'Erro ao unir/fundir arquivos KMZ: {str(e)}'}), 500
 
 
 @app.route('/api/convert-to-lightweight-kmz', methods=['POST'])
