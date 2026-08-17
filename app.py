@@ -1311,6 +1311,102 @@ def generate_photos_kml():
         return jsonify({'status': 'error', 'message': f'Erro ao salvar arquivo KML: {str(e)}'}), 500
 
 
+@app.route('/api/merge-kmz', methods=['POST'])
+def merge_kmz():
+    """
+    Mescla 2 ou mais arquivos KMZ em um único arquivo KMZ unificado,
+    preservando as pirâmides de alta resolução de cada um e agrupando em pastas no Google Earth.
+    """
+    import zipfile
+    import tempfile
+    import os
+
+    data = request.json or {}
+    kmz_paths = data.get('kmz_paths', [])
+    output_name = data.get('output_name', '').strip()
+
+    if not kmz_paths or len(kmz_paths) < 2:
+        return jsonify({'status': 'error', 'message': 'Selecione pelo menos 2 arquivos KMZ para unir.'}), 400
+
+    valid_paths = []
+    for p in kmz_paths:
+        p_clean = (p or '').strip()
+        if p_clean and os.path.exists(p_clean) and p_clean.lower().endswith('.kmz'):
+            valid_paths.append(p_clean)
+
+    if len(valid_paths) < 2:
+        return jsonify({'status': 'error', 'message': 'É necessário fornecer pelo menos 2 arquivos .KMZ existentes válidos.'}), 400
+
+    try:
+        first_dir = os.path.dirname(valid_paths[0])
+        if not output_name:
+            output_name = "mapa_unificado.kmz"
+        if not output_name.lower().endswith('.kmz'):
+            output_name += ".kmz"
+
+        output_kmz_path = os.path.join(first_dir, output_name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            folders_kml = []
+            
+            for idx, kmz_file in enumerate(valid_paths, start=1):
+                subfolder = f"map_{idx}"
+                sub_dir = os.path.join(temp_dir, subfolder)
+                os.makedirs(sub_dir, exist_ok=True)
+                
+                with zipfile.ZipFile(kmz_file, 'r') as z:
+                    z.extractall(sub_dir)
+                    
+                base_name = os.path.splitext(os.path.basename(kmz_file))[0]
+                
+                entry_kml = "doc.kml"
+                if not os.path.exists(os.path.join(sub_dir, "doc.kml")):
+                    kmls = [f for f in os.listdir(sub_dir) if f.lower().endswith('.kml')]
+                    if kmls:
+                        entry_kml = kmls[0]
+                        
+                folders_kml.append(f"""    <Folder>
+      <name>{base_name}</name>
+      <open>1</open>
+      <NetworkLink>
+        <name>{base_name}</name>
+        <Link>
+          <href>{subfolder}/{entry_kml}</href>
+        </Link>
+      </NetworkLink>
+    </Folder>""")
+
+            doc_title = os.path.splitext(output_name)[0]
+            master_doc = f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>{doc_title}</name>
+    <open>1</open>
+{chr(10).join(folders_kml)}
+  </Document>
+</kml>"""
+
+            with open(os.path.join(temp_dir, "doc.kml"), 'w', encoding='utf-8') as f_doc:
+                f_doc.write(master_doc)
+
+            with zipfile.ZipFile(output_kmz_path, 'w', zipfile.ZIP_DEFLATED) as zip_out:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, temp_dir)
+                        zip_out.write(file_path, arcname)
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Unificados {len(valid_paths)} mapas KMZ em um único arquivo com sucesso!',
+            'output_path': output_kmz_path
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'message': f'Erro ao unir arquivos KMZ: {str(e)}'}), 500
+
+
 @app.route('/api/convert-to-lightweight-kmz', methods=['POST'])
 def convert_to_lightweight_kmz():
     import zipfile
