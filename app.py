@@ -1617,114 +1617,78 @@ def convert_to_lightweight_kmz():
     import zipfile
     import re
     import os
+    import io
+    from PIL import Image
 
     data = request.json or {}
     kmz_path = data.get('kmz_path')
+    quality = data.get('quality', 'large')  # 'small', 'medium', 'large', 'ultra'
 
     if not kmz_path or not os.path.exists(kmz_path) or not os.path.isfile(kmz_path):
         return jsonify({'status': 'error', 'message': 'Arquivo KMZ original não encontrado.'}), 400
 
+    # Resolução máxima por qualidade
+    quality_resolutions = {
+        'small': (1024, '1024px'),
+        'medium': (2048, '2048px'),
+        'large': (4096, '4096px'),
+        'ultra': (8192, '8192px')
+    }
+    max_dim, qual_label = quality_resolutions.get(quality, (4096, '4096px'))
+
     dir_name = os.path.dirname(kmz_path)
     base_name = os.path.basename(kmz_path)
     name_part, ext_part = os.path.splitext(base_name)
-    output_leve_kmz = os.path.join(dir_name, f"{name_part}_leve{ext_part}")
+    output_leve_kmz = os.path.join(dir_name, f"{name_part}_leve_{quality}{ext_part}")
 
     try:
-        # 1. Procurar por 0/0/0.kml ou similar no KMZ original
-        with zipfile.ZipFile(kmz_path, 'r') as z:
-            names = z.namelist()
-            root_tile_kml_name = None
-            for name in names:
-                if name.endswith('0/0/0.kml'):
-                    root_tile_kml_name = name
-                    break
-            if not root_tile_kml_name:
-                kmls = [n for n in names if n.lower().endswith('.kml') and n != 'doc.kml']
-                if kmls:
-                    kmls.sort(key=len)
-                    root_tile_kml_name = kmls[0]
-            if not root_tile_kml_name:
-                return jsonify({'status': 'error', 'message': 'Não foi possível encontrar metadados de imagem no KMZ.'}), 400
+        # Extrai a imagem completa e as 4 coordenadas [SW, SE, NE, NW]
+        arr, corners = _extract_kmz_image_and_coords(kmz_path)
+        sw, se, ne, nw = corners
 
-            tile_kml_content = z.read(root_tile_kml_name).decode('utf-8', errors='ignore')
-            coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', tile_kml_content, re.DOTALL)
-            
-            lons = []
-            lats = []
-            if coords_match:
-                points = coords_match.group(1).strip().split()
-                for pt in points:
-                    parts = pt.split(',')
-                    if len(parts) >= 2:
-                        lons.append(float(parts[0]))
-                        lats.append(float(parts[1]))
-            else:
-                north_val = re.search(r'<north>([^<]+)</north>', tile_kml_content)
-                south_val = re.search(r'<south>([^<]+)</south>', tile_kml_content)
-                east_val = re.search(r'<east>([^<]+)</east>', tile_kml_content)
-                west_val = re.search(r'<west>([^<]+)</west>', tile_kml_content)
-                if north_val and south_val and east_val and west_val:
-                    lats = [float(north_val.group(1)), float(south_val.group(1))]
-                    lons = [float(east_val.group(1)), float(west_val.group(1))]
+        # Converter para PIL Image
+        img = Image.fromarray(arr)
+        
+        # Redimensionar para a qualidade escolhida
+        orig_w, orig_h = img.size
+        if max(orig_w, orig_h) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+        
+        img_byte_arr = io.BytesIO()
+        img.save(img_byte_arr, format='PNG', optimize=True)
+        preview_image_data = img_byte_arr.getvalue()
 
-            if lons and lats:
-                north_coord = max(lats)
-                south_coord = min(lats)
-                east_coord = max(lons)
-                west_coord = min(lons)
-            else:
-                return jsonify({'status': 'error', 'message': 'Não foi possível ler as coordenadas do KMZ.'}), 400
-
-            preview_image_data = None
-            tif_names = ["odm_orthophoto_leve.tif", "odm_orthophoto.tif"]
-            for tif_name in tif_names:
-                p = os.path.join(dir_name, tif_name)
-                if os.path.exists(p):
-                    try:
-                        from PIL import Image
-                        import io
-                        with Image.open(p) as img:
-                            img.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
-                            img_byte_arr = io.BytesIO()
-                            img.save(img_byte_arr, format='PNG')
-                            preview_image_data = img_byte_arr.getvalue()
-                            break
-                    except Exception:
-                        pass
-
-            if not preview_image_data:
-                image_name = root_tile_kml_name.replace('.kml', '.png')
-                if image_name not in names:
-                    png_files = [n for n in names if n.lower().endswith('.png')]
-                    if png_files:
-                        image_name = png_files[0]
-                preview_image_data = z.read(image_name)
+        # Coordenadas formatadas para gx:LatLonQuad (SW, SE, NE, NW)
+        coords_str = f"{sw[0]:.8f},{sw[1]:.8f},0 {se[0]:.8f},{se[1]:.8f},0 {ne[0]:.8f},{ne[1]:.8f},0 {nw[0]:.8f},{nw[1]:.8f},0"
 
         doc_kml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-  <GroundOverlay>
-    <name>{name_part}_leve</name>
-    <description>KMZ Leve Otimizado de Imagem Única</description>
-    <drawOrder>999</drawOrder>
-    <Icon>
-      <href>preview.png</href>
-    </Icon>
-    <LatLonBox>
-      <north>{north_coord:.8f}</north>
-      <south>{south_coord:.8f}</south>
-      <east>{east_coord:.8f}</east>
-      <west>{west_coord:.8f}</west>
-    </LatLonBox>
-  </GroundOverlay>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>{name_part} (Leve - {qual_label})</name>
+    <GroundOverlay>
+      <name>{name_part}_leve_{quality}</name>
+      <description>KMZ Leve Otimizado de Imagem Única ({qual_label})</description>
+      <drawOrder>999</drawOrder>
+      <Icon>
+        <href>preview.png</href>
+      </Icon>
+      <gx:LatLonQuad>
+        <coordinates>
+          {coords_str}
+        </coordinates>
+      </gx:LatLonQuad>
+    </GroundOverlay>
+  </Document>
 </kml>"""
 
         with zipfile.ZipFile(output_leve_kmz, 'w', zipfile.ZIP_DEFLATED) as zip_out:
             zip_out.writestr("doc.kml", doc_kml_content)
             zip_out.writestr("preview.png", preview_image_data)
 
+        size_mb = os.path.getsize(output_leve_kmz) / (1024 * 1024)
         return jsonify({
             'status': 'success',
-            'message': 'KMZ leve gerado com sucesso!',
+            'message': f'KMZ leve ({qual_label}, {size_mb:.1f} MB) gerado com sucesso!',
             'output_path': output_leve_kmz
         })
     except Exception as e:

@@ -918,21 +918,45 @@
         <!-- Painel de Gerador de KMZ Otimizado Leve -->
         <div class="panel">
             <h2 class="panel-title" style="border-left-color: var(--accent-green);">Criar KMZ Otimizado Leve (Imagem Única)</h2>
-            <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5;">
-                O arquivo original do WebODM (700MB+) é pesado e lento no Google Earth. Selecione o arquivo KMZ original abaixo para convertê-lo instantaneamente em um arquivo KMZ leve (1-2MB) e de alta resolução pronto para uso.
+            <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 12px;">
+                O arquivo original do WebODM (700MB+) é pesado e lento no Google Earth. Converta-o instantaneamente em um arquivo KMZ leve de imagem única, escolhendo o nível de qualidade e nitidez desejado.
             </p>
 
-            <div class="form-group">
-                <label for="heavyKmzPath">Arquivo KMZ Pesado (WebODM)</label>
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label for="heavyKmzPath">Arquivo KMZ Pesado ou Ajustado (WebODM)</label>
                 <div class="input-with-button">
-                    <input type="text" id="heavyKmzPath" placeholder="Selecione o arquivo .kmz original de 700MB+">
+                    <input type="text" id="heavyKmzPath" placeholder="Selecione o arquivo .kmz">
                     <button type="button" class="btn-browse" onclick="selectFile('all', 'heavyKmzPath')">Procurar...</button>
                 </div>
             </div>
 
-            <button type="button" id="btnConvertLeve" class="btn btn-green" style="margin-top: 8px; padding: 12px 16px; font-size: 13px;" onclick="convertKMZToLeve()">
+            <div class="form-group" style="margin-bottom: 14px;">
+                <label>Qualidade & Resolução da Imagem</label>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 6px;">
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: normal; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="kmzQualityRadio" value="small"> 
+                        <span>📱 <strong>Pequeno</strong><br><small style="color: var(--text-muted);">1024px (~1MB)</small></span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: normal; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="kmzQualityRadio" value="medium"> 
+                        <span>⚖️ <strong>Médio</strong><br><small style="color: var(--text-muted);">2048px (~3MB)</small></span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: normal; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="kmzQualityRadio" value="large" checked> 
+                        <span>💎 <strong>Grande</strong><br><small style="color: var(--accent-green);">4096px (HD)</small></span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: normal; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="kmzQualityRadio" value="ultra"> 
+                        <span>🚀 <strong>Ultra</strong><br><small style="color: var(--text-muted);">8192px (4K/8K)</small></span>
+                    </label>
+                </div>
+            </div>
+
+            <button type="button" id="btnConvertLeve" class="btn btn-green" style="padding: 12px 16px; font-size: 13px;" onclick="convertKMZToLeve()">
                 <span>⚡</span> Gerar KMZ Leve Otimizado
             </button>
+        </div>
+
         <!-- Painel de Gerador de KMZ de Foto Única -->
         <div class="panel">
             <h2 class="panel-title" style="border-left-color: var(--accent-blue);">Criar KMZ de Foto Única (Sobreposição)</h2>
@@ -1877,21 +1901,33 @@
                 return;
             }
 
-            appendToTerminal(`--- GERANDO KMZ LEVE OTIMIZADO DE IMAGEM ÚNICA ---`, 'info');
+            const quality = document.querySelector('input[name="kmzQualityRadio"]:checked')?.value || 'large';
+            const qualityLabels = {
+                'small': 'Pequeno (1024px)',
+                'medium': 'Médio (2048px)',
+                'large': 'Grande (4096px)',
+                'ultra': 'Ultra (8192px)'
+            };
+
+            appendToTerminal(`--- GERANDO KMZ LEVE OTIMIZADO [Qualidade: ${qualityLabels[quality] || quality}] ---`, 'info');
             const btn = document.getElementById('btnConvertLeve');
             btn.disabled = true;
 
             fetch('/api/convert-to-lightweight-kmz', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ kmz_path: kmzPath })
+                body: JSON.stringify({
+                    kmz_path: kmzPath,
+                    quality: quality
+                })
             })
             .then(res => res.json())
             .then(data => {
                 btn.disabled = false;
                 if (data.status === 'success') {
-                    appendToTerminal(`Sucesso! KMZ leve otimizado gerado em: ${data.output_path}`, 'info');
-                    alert(`KMZ leve gerado com sucesso!\nSalvo em: ${data.output_path}\n\nVocê já pode abrir este arquivo diretamente no Google Earth.`);
+                    appendToTerminal(`Sucesso! ${data.message}`, 'info');
+                    appendToTerminal(`Salvo em: ${data.output_path}`, 'info');
+                    alert(`KMZ leve gerado com sucesso!\n${data.message}\nSalvo em: ${data.output_path}\n\nVocê já pode abrir este arquivo diretamente no Google Earth.`);
                 } else {
                     appendToTerminal(`Erro: ${data.message}`, 'error');
                     alert(`Erro ao gerar KMZ leve: ${data.message}`);
