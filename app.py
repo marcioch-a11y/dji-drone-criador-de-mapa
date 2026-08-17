@@ -1066,44 +1066,94 @@ def apply_visual_adjust():
                 else:
                     return jsonify({'status': 'error', 'message': 'Não foi possível ler as coordenadas do KMZ original.'}), 400
 
-        # 2. Extrair os parâmetros da caixa ajustada salva pelo Google Earth (Box 1)
+        # 2. Extrair os 4 cantos ajustados do Google Earth (Box 1)
+        #    O Google Earth salva como LatLonBox (N/S/E/W + rotation), precisamos
+        #    reconstruir os 4 cantos reais (gx:LatLonQuad) a partir disso.
         with zipfile.ZipFile(adjusted_kmz, 'r') as z:
             names = z.namelist()
             kmls = [n for n in names if n.lower().endswith('.kml')]
             if not kmls:
                 return jsonify({'status': 'error', 'message': 'Nenhum KML encontrado no KMZ ajustado.'}), 400
             txt_adj = z.read(kmls[0]).decode('utf-8', errors='ignore')
-            nm = re.search(r'<north>([^<]+)</north>', txt_adj)
-            sm = re.search(r'<south>([^<]+)</south>', txt_adj)
-            em = re.search(r'<east>([^<]+)</east>', txt_adj)
-            wm = re.search(r'<west>([^<]+)</west>', txt_adj)
-            if not (nm and sm and em and wm):
-                return jsonify({'status': 'error', 'message': 'Coordenadas não encontradas no KMZ ajustado.'}), 400
+            
+            # Tentar ler gx:LatLonQuad primeiro (mais preciso)
+            quad_adj = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', txt_adj, re.DOTALL)
+            if quad_adj:
+                pts = quad_adj.group(1).strip().split()
+                adj_corners = []
+                for pt in pts:
+                    parts = pt.split(',')
+                    if len(parts) >= 2:
+                        adj_corners.append((float(parts[0]), float(parts[1])))
+                sw1, se1, ne1, nw1 = adj_corners[0], adj_corners[1], adj_corners[2], adj_corners[3]
+            else:
+                # Fallback: LatLonBox (N/S/E/W + rotation) → reconstruir 4 cantos
+                nm = re.search(r'<north>([^<]+)</north>', txt_adj)
+                sm = re.search(r'<south>([^<]+)</south>', txt_adj)
+                em = re.search(r'<east>([^<]+)</east>', txt_adj)
+                wm = re.search(r'<west>([^<]+)</west>', txt_adj)
+                if not (nm and sm and em and wm):
+                    return jsonify({'status': 'error', 'message': 'Coordenadas não encontradas no KMZ ajustado.'}), 400
 
-            n1, s1, e1, w1 = float(nm.group(1)), float(sm.group(1)), float(em.group(1)), float(wm.group(1))
-            rot1_m = re.search(r'<rotation>([^<]+)</rotation>', txt_adj)
-            rot_1_deg = float(rot1_m.group(1)) if rot1_m else math.degrees(rot_0_rad)
+                n1, s1, e1, w1 = float(nm.group(1)), float(sm.group(1)), float(em.group(1)), float(wm.group(1))
+                rot1_m = re.search(r'<rotation>([^<]+)</rotation>', txt_adj)
+                rot_1_deg = float(rot1_m.group(1)) if rot1_m else 0.0
+                rot_1_rad = math.radians(rot_1_deg)
+                
+                c_lat_1 = (n1 + s1) / 2.0
+                c_lon_1 = (e1 + w1) / 2.0
+                hw = (e1 - w1) / 2.0
+                hh = (n1 - s1) / 2.0
+                cos1 = math.cos(math.radians(c_lat_1))
+                
+                # Reconstruir 4 cantos a partir do retângulo + rotação (em espaço geográfico)
+                corners_local = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]  # SW, SE, NE, NW
+                adj_cantos = []
+                for dx, dy in corners_local:
+                    # Rotacionar em espaço métrico (ajustar longitude pelo cosseno)
+                    u = dx * cos1
+                    v = dy
+                    u_rot = u * math.cos(rot_1_rad) - v * math.sin(rot_1_rad)
+                    v_rot = u * math.sin(rot_1_rad) + v * math.cos(rot_1_rad)
+                    adj_cantos.append((c_lon_1 + u_rot / cos1, c_lat_1 + v_rot))
+                sw1, se1, ne1, nw1 = adj_cantos[0], adj_cantos[1], adj_cantos[2], adj_cantos[3]
 
-        c_lat_1 = (n1 + s1) / 2.0
-        c_lon_1 = (e1 + w1) / 2.0
-        w_lon_1 = e1 - w1
-        h_lat_1 = n1 - s1
-        rot_1_rad = math.radians(rot_1_deg)
-        cos1 = math.cos(math.radians(c_lat_1))
+        # 3. Mapeamento Bilinear Direto (Quad-to-Quad) — ZERO erro acumulado
+        #    Normaliza qualquer ponto do quadrilátero original em [0,1] x [0,1]
+        #    e mapeia diretamente para o quadrilátero ajustado.
+        
+        # Cantos do original: sw0, se0, ne0, nw0
+        # Cantos do ajustado: sw1, se1, ne1, nw1
+        
+        def solve_bilinear_uv(lon, lat, p00, p10, p01, p11):
+            """Resolve u,v tais que P = (1-u)(1-v)p00 + u(1-v)p10 + (1-u)v*p01 + u*v*p11"""
+            # Usar método iterativo Newton-Raphson (2D) para resolver u,v
+            u, v = 0.5, 0.5
+            for _ in range(20):
+                # Posição estimada
+                fx = (1-u)*(1-v)*p00[0] + u*(1-v)*p10[0] + (1-u)*v*p01[0] + u*v*p11[0] - lon
+                fy = (1-u)*(1-v)*p00[1] + u*(1-v)*p10[1] + (1-u)*v*p01[1] + u*v*p11[1] - lat
+                if abs(fx) < 1e-12 and abs(fy) < 1e-12:
+                    break
+                # Jacobiano
+                dfx_du = -(1-v)*p00[0] + (1-v)*p10[0] - v*p01[0] + v*p11[0]
+                dfx_dv = -(1-u)*p00[0] - u*p10[0] + (1-u)*p01[0] + u*p11[0]
+                dfy_du = -(1-v)*p00[1] + (1-v)*p10[1] - v*p01[1] + v*p11[1]
+                dfy_dv = -(1-u)*p00[1] - u*p10[1] + (1-u)*p01[1] + u*p11[1]
+                det = dfx_du * dfy_dv - dfx_dv * dfy_du
+                if abs(det) < 1e-18:
+                    break
+                u -= (dfy_dv * fx - dfx_dv * fy) / det
+                v -= (-dfy_du * fx + dfx_du * fy) / det
+            return u, v
 
-        # 3. Função de Transformação Afim completa (Translação + Escala + Rotação)
         def transform_point(lon, lat):
-            u = (lon - c_lon_0) * cos0
-            v = (lat - c_lat_0)
-            u_loc = u * math.cos(-rot_0_rad) - v * math.sin(-rot_0_rad)
-            v_loc = u * math.sin(-rot_0_rad) + v * math.cos(-rot_0_rad)
-            sx = u_loc / (w_lon_0 * cos0)
-            sy = v_loc / h_lat_0
-            u_prime_loc = sx * (w_lon_1 * cos1)
-            v_prime_loc = sy * h_lat_1
-            u_prime = u_prime_loc * math.cos(rot_1_rad) - v_prime_loc * math.sin(rot_1_rad)
-            v_prime = u_prime_loc * math.sin(rot_1_rad) + v_prime_loc * math.cos(rot_1_rad)
-            return c_lon_1 + u_prime / cos1, c_lat_1 + v_prime
+            # SW=p00, SE=p10, NW=p01, NE=p11
+            u, v = solve_bilinear_uv(lon, lat, sw0, se0, nw0, ne0)
+            # Mapear u,v para o quadrilátero ajustado
+            new_lon = (1-u)*(1-v)*sw1[0] + u*(1-v)*se1[0] + (1-u)*v*nw1[0] + u*v*ne1[0]
+            new_lat = (1-u)*(1-v)*sw1[1] + u*(1-v)*se1[1] + (1-u)*v*nw1[1] + u*v*ne1[1]
+            return new_lon, new_lat
 
         # 4. Criar o KMZ final ajustado
         dir_name = os.path.dirname(original_kmz)
