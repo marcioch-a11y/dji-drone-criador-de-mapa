@@ -1311,11 +1311,12 @@ def generate_photos_kml():
         return jsonify({'status': 'error', 'message': f'Erro ao salvar arquivo KML: {str(e)}'}), 500
 
 
-def _extract_kmz_image_and_coords(kmz_path):
+def _extract_kmz_image_and_coords(kmz_path, target_max_dim=4096):
     """Auxiliar para extrair a imagem de alta resolução e as 4 coordenadas [SW, SE, NE, NW] de um KMZ."""
     import zipfile
     import io
     import re
+    import math
     import numpy as np
     from PIL import Image
 
@@ -1342,7 +1343,11 @@ def _extract_kmz_image_and_coords(kmz_path):
         levels = sorted(list(set([int(n.split('/')[0]) for n in png_tiles if n.split('/')[0].isdigit()])))
         
         if levels:
-            target_lvl = 3 if 3 in levels else max(levels)
+            # Nível 0=256, 1=512, 2=1024, 3=2048, 4=4096, 5=8192
+            req_lvl = max(0, int(round(math.log2(max(256, target_max_dim) / 256.0))))
+            available_lvls = [lvl for lvl in levels if lvl <= req_lvl]
+            target_lvl = max(available_lvls) if available_lvls else max(levels)
+            
             sample = [n for n in png_tiles if n.startswith(f'{target_lvl}/')][0]
             s_img = Image.open(io.BytesIO(z.read(sample)))
             tw, th = s_img.size
@@ -1642,8 +1647,8 @@ def convert_to_lightweight_kmz():
     output_leve_kmz = os.path.join(dir_name, f"{name_part}_leve_{quality}{ext_part}")
 
     try:
-        # Extrai a imagem completa e as 4 coordenadas [SW, SE, NE, NW]
-        arr, corners = _extract_kmz_image_and_coords(kmz_path)
+        # Extrai a imagem completa no nível correspondente e as 4 coordenadas [SW, SE, NE, NW]
+        arr, corners = _extract_kmz_image_and_coords(kmz_path, target_max_dim=max_dim)
         sw, se, ne, nw = corners
 
         # Converter para PIL Image
