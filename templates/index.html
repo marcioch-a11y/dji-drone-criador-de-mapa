@@ -1713,9 +1713,14 @@
         function generateVisualPreviewKMZ() {
             const kmzPath = document.getElementById('kmzPathToAdjust').value.trim();
             if (!kmzPath) {
-                alert("Por favor, selecione o arquivo KMZ original primeiro.");
+                const inputEl = document.getElementById('kmzPathToAdjust');
+                inputEl.style.border = '2px solid #ef4444';
+                inputEl.focus();
+                alert("Por favor, selecione primeiro o 'Arquivo KMZ Original (WebODM)' no campo acima.");
                 return;
             }
+            document.getElementById('kmzPathToAdjust').style.border = '';
+            localStorage.setItem('dji_last_kmzPathToAdjust', kmzPath);
 
             appendToTerminal("--- GERANDO KMZ DE AJUSTE VISUAL ---", 'info');
             const btn = document.getElementById('btnGenPreview');
@@ -1732,7 +1737,18 @@
                 if (data.status === 'success') {
                     appendToTerminal(`Sucesso! KMZ de visualização rápida gerado em: ${data.output_path}`, 'info');
                     appendToTerminal("Abra este arquivo no Google Earth Pro, ajuste-o nas propriedades (mova/redimensione a imagem) e salve de volta como KMZ.", 'info');
-                    alert(`KMZ de ajuste gerado!\nSalvo em: ${data.output_path}\n\nInstruções:\n1. Abra este arquivo no Google Earth Pro.\n2. Clique com botão direito nele -> Propriedades.\n3. Mova-o visualmente na tela.\n4. Clique OK, depois clique com botão direito -> Salvar lugar como... e salve no computador.\n5. Selecione este arquivo salvo no Passo 2.`);
+                    
+                    // Sugere na mesma pasta o arquivo ajustado salvo se estiver em branco
+                    const adjInput = document.getElementById('adjustedKMZPath');
+                    if (!adjInput.value.trim()) {
+                        const dir = kmzPath.substring(0, kmzPath.lastIndexOf('\\') !== -1 ? kmzPath.lastIndexOf('\\') : kmzPath.lastIndexOf('/'));
+                        if (dir) {
+                            adjInput.value = `${dir}\\ajustado.kmz`;
+                            localStorage.setItem('dji_last_adjustedKMZPath', adjInput.value);
+                        }
+                    }
+
+                    alert(`KMZ de ajuste gerado!\nSalvo em: ${data.output_path}\n\nInstruções:\n1. Abra este arquivo no Google Earth Pro.\n2. Clique com botão direito nele -> Propriedades.\n3. Mova-o visualmente na tela até alinhar com o satélite.\n4. Clique OK, depois clique com botão direito nele -> 'Salvar lugar como...' e salve como 'ajustado.kmz'.\n5. Selecione este arquivo salvo no Passo 2 abaixo e clique em 'Aplicar Ajuste Visual'.`);
                 } else {
                     appendToTerminal(`Erro: ${data.message}`, 'error');
                     alert(`Erro ao gerar KMZ de ajuste: ${data.message}`);
@@ -1745,13 +1761,30 @@
         }
 
         function applyVisualKMZAdjustment() {
-            const origKmz = document.getElementById('kmzPathToAdjust').value.trim();
-            const adjKmz = document.getElementById('adjustedKMZPath').value.trim();
+            const origInput = document.getElementById('kmzPathToAdjust');
+            const adjInput = document.getElementById('adjustedKMZPath');
+            const origKmz = origInput.value.trim();
+            const adjKmz = adjInput.value.trim();
 
-            if (!origKmz || !adjKmz) {
-                alert("Por favor, selecione tanto o KMZ original quanto o KMZ ajustado salvo do Google Earth.");
+            origInput.style.border = '';
+            adjInput.style.border = '';
+
+            if (!origKmz) {
+                origInput.style.border = '2px solid #ef4444';
+                origInput.focus();
+                alert("⚠️ Selecione o 'Arquivo KMZ Original (WebODM)' no primeiro campo acima.");
                 return;
             }
+
+            if (!adjKmz) {
+                adjInput.style.border = '2px solid #ef4444';
+                adjInput.focus();
+                alert("⚠️ Selecione o arquivo KMZ que você salvou no Google Earth no campo 'KMZ Ajustado e Salvo do Google Earth' (Passo 2).");
+                return;
+            }
+
+            localStorage.setItem('dji_last_kmzPathToAdjust', origKmz);
+            localStorage.setItem('dji_last_adjustedKMZPath', adjKmz);
 
             appendToTerminal("--- APLICANDO AJUSTE VISUAL AO MAPA COMPLETO ---", 'info');
             const btn = document.getElementById('btnApplyVisual');
@@ -1769,7 +1802,7 @@
             .then(data => {
                 btn.disabled = false;
                 if (data.status === 'success') {
-                    appendToTerminal(`Sucesso! Ajuste aplicado ao mapa completo.`, 'info');
+                    appendToTerminal(`Sucesso! Ajuste aplicado ao mapa completo com Transformação Afim.`, 'info');
                     appendToTerminal(`Mapa ajustado final salvo em: ${data.output_path}`, 'info');
                     alert(`Mapa ajustado com sucesso!\nSalvo em: ${data.output_path}`);
                 } else {
@@ -1891,6 +1924,16 @@
                 appendToTerminal(`Erro de comunicação com o servidor.`, 'error');
                 alert("Erro ao comunicar com o servidor.");
             });
+        }
+
+        // Restaura campos de ajuste visual KMZ se salvos anteriormente
+        const savedOrigKmz = localStorage.getItem('dji_last_kmzPathToAdjust');
+        if (savedOrigKmz && document.getElementById('kmzPathToAdjust')) {
+            document.getElementById('kmzPathToAdjust').value = savedOrigKmz;
+        }
+        const savedAdjKmz = localStorage.getItem('dji_last_adjustedKMZPath');
+        if (savedAdjKmz && document.getElementById('adjustedKMZPath')) {
+            document.getElementById('adjustedKMZPath').value = savedAdjKmz;
         }
 
         // Inicializa o streaming de logs e o polling de status na carga inicial
