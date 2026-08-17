@@ -1443,6 +1443,9 @@ def merge_kmz():
                 y = (max_lat - lat) / (max_lat - min_lat) * (global_h - 1)
                 return x, y
 
+            warped_maps = []
+            dist_maps = []
+
             for arr, (sw, se, ne, nw) in maps_data:
                 h, w = arr.shape[:2]
                 src_pts = np.float32([
@@ -1461,28 +1464,56 @@ def merge_kmz():
                 M = cv2.getPerspectiveTransform(src_pts, dst_pts)
                 warped_rgba = cv2.warpPerspective(arr, M, (global_w, global_h), flags=cv2.INTER_LINEAR)
                 
-                alpha = warped_rgba[:, :, 3] / 255.0
-                valid_mask = (alpha > 0.05).astype(np.uint8)
+                alpha = warped_rgba[:, :, 3]
+                valid_mask = (alpha > 10).astype(np.uint8)
+                dist = cv2.distanceTransform(valid_mask, cv2.DIST_L2, 5)
                 
-                if np.any(valid_mask):
-                    dist = cv2.distanceTransform(valid_mask, cv2.DIST_L2, 5)
-                    max_d = np.max(dist)
-                    weight = (np.clip(dist / min(max_d, 25.0), 0.0, 1.0) if max_d > 0 else 1.0) * alpha
-                    bgr = warped_rgba[:, :, :3].astype(np.float32)
+                warped_maps.append(warped_rgba)
+                dist_maps.append(dist)
+
+            # Fusão Seamline (Voronoi) com preservação total de cores RGB:
+            # Em vez de sobrepor com transparência (efeito fantasma), cada pixel
+            # recebe o valor do mapa com maior confiança geométrica (maior distância da borda),
+            # com transição suave em uma faixa estreita de 20px na linha de corte.
+            fused_rgba = np.zeros((global_h, global_w, 4), dtype=np.uint8)
+
+            if len(warped_maps) == 2:
+                d0, d1 = dist_maps[0], dist_maps[1]
+                both = (d0 > 0) & (d1 > 0)
+                only0 = (d0 > 0) & (d1 == 0)
+                only1 = (d1 > 0) & (d0 == 0)
+
+                fused_rgba[only0] = warped_maps[0][only0]
+                fused_rgba[only1] = warped_maps[1][only1]
+
+                if np.any(both):
+                    diff = d0[both] - d1[both]
+                    w0 = np.clip((diff + 15.0) / 30.0, 0.0, 1.0)
+                    w1 = 1.0 - w0
+                    
                     for c in range(3):
-                        accum_color[:, :, c] += bgr[:, :, c] * weight
-                    accum_weight += weight
+                        fused_rgba[both, c] = np.clip(
+                            warped_maps[0][both, c].astype(np.float32) * w0 +
+                            warped_maps[1][both, c].astype(np.float32) * w1,
+                            0, 255
+                        ).astype(np.uint8)
+                    fused_rgba[both, 3] = np.maximum(warped_maps[0][both, 3], warped_maps[1][both, 3])
+            else:
+                # 3 ou mais mapas: soma ponderada normalizada
+                accum_color = np.zeros((global_h, global_w, 3), dtype=np.float32)
+                accum_weight = np.zeros((global_h, global_w), dtype=np.float32)
+                for i in range(len(warped_maps)):
+                    w = np.power(dist_maps[i], 2)
+                    for c in range(3):
+                        accum_color[:, :, c] += warped_maps[i][:, :, c].astype(np.float32) * w
+                    accum_weight += w
+                
+                valid = accum_weight > 0.001
+                for c in range(3):
+                    fused_rgba[valid, c] = np.clip(accum_color[valid, c] / accum_weight[valid], 0, 255).astype(np.uint8)
+                fused_rgba[valid, 3] = 255
 
-            fused_mask = accum_weight > 0.001
-            fused_bgr = np.zeros((global_h, global_w, 3), dtype=np.uint8)
-            for c in range(3):
-                fused_bgr[fused_mask, c] = np.clip(accum_color[fused_mask, c] / accum_weight[fused_mask], 0, 255).astype(np.uint8)
-
-            fused_alpha = np.clip(accum_weight * 255.0, 0, 255).astype(np.uint8)
-            fused_alpha[~fused_mask] = 0
-
-            fused_rgba = cv2.merge([fused_bgr[:, :, 0], fused_bgr[:, :, 1], fused_bgr[:, :, 2], fused_alpha])
-            fused_img = Image.fromarray(cv2.cvtColor(fused_rgba, cv2.COLOR_BGRA2RGBA))
+            fused_img = Image.fromarray(fused_rgba)
 
             doc_title = os.path.splitext(output_name)[0]
             doc_kml = f"""<?xml version="1.0" encoding="UTF-8"?>
