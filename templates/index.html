@@ -1030,6 +1030,153 @@
                 <span>🎨</span> Fundir Mapas em Mosaico Único
             </button>
         </div>
+
+        <!-- Painel de Recorte e Desmembramento de KMZ -->
+        <div class="panel">
+            <h2 class="panel-title" style="border-left-color: #ec4899;">✂️ Recortar / Desmembrar KMZ (Cropper de Talhões)</h2>
+            <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 12px;">
+                Se o seu KMZ ficou grande demais (ex: múltiplos talhões ou fazenda inteira) e está pesado no Chazal Editor ou Google Earth, corte a área desejada ou fatie em partes menores leves e georreferenciadas.
+            </p>
+
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label for="cropSourceKmz">Arquivo KMZ de Origem (Pesado / Completo)</label>
+                <div class="input-with-button">
+                    <input type="text" id="cropSourceKmz" placeholder="Selecione o arquivo .kmz" onchange="loadKMZInfoForCrop(this.value)">
+                    <button type="button" class="btn-browse" onclick="selectFile('all', 'cropSourceKmz', () => loadKMZInfoForCrop(document.getElementById('cropSourceKmz').value))">Procurar...</button>
+                </div>
+            </div>
+
+            <!-- Miniatura e Metadados do KMZ carregado -->
+            <div id="cropKmzInfoBox" style="display: none; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-bottom: 14px;">
+                <div style="display: flex; gap: 14px; align-items: center;">
+                    <div style="position: relative; width: 100px; height: 100px; background: #000; border-radius: 6px; overflow: hidden; border: 1px solid var(--border-color); flex-shrink: 0;">
+                        <img id="cropPreviewImg" src="" style="width: 100%; height: 100%; object-fit: cover;">
+                        <div id="cropBoxOverlay" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; border: 2px dashed #ec4899; background: rgba(236, 72, 153, 0.2); pointer-events: none;"></div>
+                    </div>
+                    <div style="font-size: 12px; line-height: 1.6; color: var(--text-main); flex: 1;">
+                        <div><strong>Arquivo:</strong> <span id="cropInfoName">--</span> (<span id="cropInfoSize" style="color: #ec4899; font-weight: bold;">--</span>)</div>
+                        <div><strong>Resolução:</strong> <span id="cropInfoDim">--</span></div>
+                        <div style="color: var(--text-muted); font-size: 11px;"><strong>Centro:</strong> Lat <span id="cropInfoLat">--</span>, Lon <span id="cropInfoLon">--</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Seletor de Modo de Recorte -->
+            <div style="display: flex; gap: 6px; margin-bottom: 14px; background: rgba(0,0,0,0.2); padding: 4px; border-radius: 8px; border: 1px solid var(--border-color);">
+                <button type="button" id="cropTabPercent" class="mode-btn active" style="font-size: 11px; padding: 6px 8px;" onclick="setCropSubMode('percent')">🎚️ Margens (%)</button>
+                <button type="button" id="cropTabBounds" class="mode-btn" style="font-size: 11px; padding: 6px 8px;" onclick="setCropSubMode('bounds')">📐 Coordenadas</button>
+                <button type="button" id="cropTabGrid" class="mode-btn" style="font-size: 11px; padding: 6px 8px;" onclick="setCropSubMode('grid')">🧩 Grade / Partes</button>
+                <button type="button" id="cropTabKml" class="mode-btn" style="font-size: 11px; padding: 6px 8px;" onclick="setCropSubMode('kml_poly')">📍 KML Talhão</button>
+            </div>
+
+            <!-- 1. Modo Margens Percentuais -->
+            <div id="cropModePercent" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 11px;">Cortar Topo (Norte): <span id="valPctTop" style="color: #ec4899;">0%</span></label>
+                        <input type="range" id="cropPctTop" min="0" max="80" value="0" step="1" oninput="updateCropBox()">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 11px;">Cortar Fundo (Sul): <span id="valPctBottom" style="color: #ec4899;">0%</span></label>
+                        <input type="range" id="cropPctBottom" min="0" max="80" value="0" step="1" oninput="updateCropBox()">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 11px;">Cortar Esquerda (Oeste): <span id="valPctLeft" style="color: #ec4899;">0%</span></label>
+                        <input type="range" id="cropPctLeft" min="0" max="80" value="0" step="1" oninput="updateCropBox()">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 11px;">Cortar Direita (Leste): <span id="valPctRight" style="color: #ec4899;">0%</span></label>
+                        <input type="range" id="cropPctRight" min="0" max="80" value="0" step="1" oninput="updateCropBox()">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Modo Coordenadas Limites -->
+            <div id="cropModeBounds" style="display: none; flex-direction: column; gap: 10px; margin-bottom: 14px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 11px;">Latitude Norte</label>
+                        <input type="number" id="cropBoundNorth" step="0.000001" placeholder="-24.534000">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 11px;">Latitude Sul</label>
+                        <input type="number" id="cropBoundSouth" step="0.000001" placeholder="-24.544000">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 11px;">Longitude Oeste</label>
+                        <input type="number" id="cropBoundWest" step="0.000001" placeholder="-47.796000">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 11px;">Longitude Leste</label>
+                        <input type="number" id="cropBoundEast" step="0.000001" placeholder="-47.788000">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. Modo Grade -->
+            <div id="cropModeGrid" style="display: none; flex-direction: column; gap: 10px; margin-bottom: 14px;">
+                <label style="font-size: 12px; color: var(--text-muted);">Dividir o mapa automaticamente em partes menores:</label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="cropGridRadio" value="1x2"> 
+                        <span>🌓 <strong>Metade Esq / Dir</strong> (2 partes)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="cropGridRadio" value="2x1"> 
+                        <span>🌔 <strong>Metade Topo / Fundo</strong> (2 partes)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="cropGridRadio" value="2x2" checked> 
+                        <span>田 <strong>Grade 2x2</strong> (4 partes)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 8px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="cropGridRadio" value="3x3"> 
+                        <span>▦ <strong>Grade 3x3</strong> (9 partes)</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- 4. Modo KML Polígono -->
+            <div id="cropModeKml" style="display: none; flex-direction: column; gap: 10px; margin-bottom: 14px;">
+                <label for="cropKmlPolyPath" style="font-size: 12px;">Arquivo KML da Divisa / Contorno do Talhão</label>
+                <div class="input-with-button">
+                    <input type="text" id="cropKmlPolyPath" placeholder="Selecione o arquivo .kml da divisa">
+                    <button type="button" class="btn-browse" onclick="selectFile('all', 'cropKmlPolyPath')">Procurar...</button>
+                </div>
+            </div>
+
+            <!-- Qualidade de Saída -->
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label style="font-size: 12px;">Qualidade do Recorte</label>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 4px;">
+                    <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 6px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="cropQualityRadio" value="small"> 
+                        <span>📱 Leve</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 6px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="cropQualityRadio" value="medium"> 
+                        <span>⚖️ Médio</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 6px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="cropQualityRadio" value="large" checked> 
+                        <span>💎 Grande</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; background: rgba(255,255,255,0.03); padding: 6px; border-radius: 6px; border: 1px solid var(--border-color);">
+                        <input type="radio" name="cropQualityRadio" value="ultra"> 
+                        <span>🚀 Ultra</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 14px;">
+                <label for="cropOutputName">Nome Base dos Arquivos de Saída (.KMZ)</label>
+                <input type="text" id="cropOutputName" placeholder="Ex: talhao_f11_recorte">
+            </div>
+
+            <button type="button" id="btnExecuteCrop" class="btn" style="background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); padding: 12px 16px; font-size: 13px; box-shadow: 0 4px 12px rgba(236, 72, 153, 0.3);" onclick="executeKMZCrop()">
+                <span>✂️</span> Recortar e Gerar KMZ Leve
+            </button>
+        </div>
     </div>
 
 
@@ -2079,6 +2226,171 @@
             .catch(err => {
                 btn.disabled = false;
                 appendToTerminal("Erro de comunicação com o servidor.", 'error');
+                alert("Erro ao comunicar com o servidor.");
+            });
+        }
+
+        // ==========================================
+        // SISTEMA DE RECORTE E DESMEMBRAMENTO DE KMZ
+        // ==========================================
+        let currentCropMode = 'percent';
+        let currentKmzInfo = null;
+
+        function setCropSubMode(mode) {
+            currentCropMode = mode;
+            ['percent', 'bounds', 'grid', 'kml_poly'].forEach(m => {
+                const btn = document.getElementById(`cropTab${m === 'kml_poly' ? 'Kml' : m.charAt(0).toUpperCase() + m.slice(1)}`);
+                const container = document.getElementById(`cropMode${m === 'kml_poly' ? 'Kml' : m.charAt(0).toUpperCase() + m.slice(1)}`);
+                if (btn) btn.classList.toggle('active', m === mode);
+                if (container) container.style.display = (m === mode) ? 'flex' : 'none';
+            });
+            updateCropBox();
+        }
+
+        function loadKMZInfoForCrop(kmzPath) {
+            if (!kmzPath || !kmzPath.trim()) return;
+            const infoBox = document.getElementById('cropKmzInfoBox');
+            appendToTerminal(`Inspecionando arquivo KMZ para recorte: ${kmzPath}...`, 'info');
+
+            fetch('/api/get-kmz-info', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kmz_path: kmzPath.trim() })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    currentKmzInfo = data;
+                    infoBox.style.display = 'block';
+                    document.getElementById('cropInfoName').innerText = data.name;
+                    document.getElementById('cropInfoSize').innerText = `${data.size_mb} MB`;
+                    document.getElementById('cropInfoDim').innerText = `${data.dimensions.width}x${data.dimensions.height}px`;
+                    document.getElementById('cropInfoLat').innerText = data.bounds.center_lat.toFixed(5);
+                    document.getElementById('cropInfoLon').innerText = data.bounds.center_lon.toFixed(5);
+                    
+                    if (data.preview_url) {
+                        document.getElementById('cropPreviewImg').src = data.preview_url;
+                    }
+
+                    // Preencher coordenadas nos campos de limite
+                    document.getElementById('cropBoundNorth').value = data.bounds.north.toFixed(6);
+                    document.getElementById('cropBoundSouth').value = data.bounds.south.toFixed(6);
+                    document.getElementById('cropBoundEast').value = data.bounds.east.toFixed(6);
+                    document.getElementById('cropBoundWest').value = data.bounds.west.toFixed(6);
+
+                    // Sugerir nome de saída
+                    const baseName = data.name.replace(/\.kmz$/i, '');
+                    document.getElementById('cropOutputName').value = `${baseName}_recorte`;
+
+                    updateCropBox();
+                    appendToTerminal(`KMZ pronto para recorte! Dimensões: ${data.dimensions.width}x${data.dimensions.height}px (${data.size_mb} MB).`, 'info');
+                } else {
+                    infoBox.style.display = 'none';
+                    appendToTerminal(`Erro ao inspecionar KMZ: ${data.message}`, 'error');
+                }
+            })
+            .catch(err => {
+                infoBox.style.display = 'none';
+                appendToTerminal("Erro de conexão ao obter informações do KMZ.", 'error');
+            });
+        }
+
+        function updateCropBox() {
+            const top = parseFloat(document.getElementById('cropPctTop').value) || 0;
+            const bottom = parseFloat(document.getElementById('cropPctBottom').value) || 0;
+            const left = parseFloat(document.getElementById('cropPctLeft').value) || 0;
+            const right = parseFloat(document.getElementById('cropPctRight').value) || 0;
+
+            document.getElementById('valPctTop').innerText = `${top}%`;
+            document.getElementById('valPctBottom').innerText = `${bottom}%`;
+            document.getElementById('valPctLeft').innerText = `${left}%`;
+            document.getElementById('valPctRight').innerText = `${right}%`;
+
+            const overlay = document.getElementById('cropBoxOverlay');
+            if (overlay) {
+                if (currentCropMode === 'percent') {
+                    overlay.style.display = 'block';
+                    overlay.style.top = `${top}%`;
+                    overlay.style.bottom = `${bottom}%`;
+                    overlay.style.left = `${left}%`;
+                    overlay.style.right = `${right}%`;
+                } else {
+                    overlay.style.display = 'none';
+                }
+            }
+        }
+
+        function executeKMZCrop() {
+            const srcKmz = document.getElementById('cropSourceKmz').value.trim();
+            if (!srcKmz) {
+                alert("Por favor, selecione o arquivo KMZ de origem para recortar.");
+                return;
+            }
+
+            const quality = document.querySelector('input[name="cropQualityRadio"]:checked')?.value || 'large';
+            const customName = document.getElementById('cropOutputName').value.trim();
+            const btn = document.getElementById('btnExecuteCrop');
+            btn.disabled = true;
+
+            const payload = {
+                kmz_path: srcKmz,
+                crop_mode: currentCropMode,
+                quality: quality,
+                custom_name: customName
+            };
+
+            if (currentCropMode === 'percent') {
+                payload.pct_top = document.getElementById('cropPctTop').value;
+                payload.pct_bottom = document.getElementById('cropPctBottom').value;
+                payload.pct_left = document.getElementById('cropPctLeft').value;
+                payload.pct_right = document.getElementById('cropPctRight').value;
+            } else if (currentCropMode === 'bounds') {
+                payload.north = document.getElementById('cropBoundNorth').value;
+                payload.south = document.getElementById('cropBoundSouth').value;
+                payload.east = document.getElementById('cropBoundEast').value;
+                payload.west = document.getElementById('cropBoundWest').value;
+                if (!payload.north || !payload.south || !payload.east || !payload.west) {
+                    alert("Por favor, preencha as 4 coordenadas limites (Norte, Sul, Leste, Oeste).");
+                    btn.disabled = false;
+                    return;
+                }
+            } else if (currentCropMode === 'grid') {
+                payload.grid_type = document.querySelector('input[name="cropGridRadio"]:checked')?.value || '2x2';
+            } else if (currentCropMode === 'kml_poly') {
+                payload.kml_poly_path = document.getElementById('cropKmlPolyPath').value.trim();
+                if (!payload.kml_poly_path) {
+                    alert("Por favor, selecione o arquivo KML com o contorno/polígono do talhão.");
+                    btn.disabled = false;
+                    return;
+                }
+            }
+
+            appendToTerminal(`--- INICIANDO RECORTE DE KMZ (Modo: ${currentCropMode}, Qualidade: ${quality}) ---`, 'info');
+
+            fetch('/api/crop-kmz', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                if (data.status === 'success') {
+                    appendToTerminal(`Sucesso! ${data.message}`, 'info');
+                    let summary = `KMZ recortado com sucesso!\n\nArquivos gerados:\n`;
+                    data.files.forEach(f => {
+                        appendToTerminal(`  ➔ ${f.name} (${f.size_mb} MB, ${f.dimensions}) em: ${f.path}`, 'info');
+                        summary += `• ${f.name} (${f.size_mb} MB)\n`;
+                    });
+                    alert(summary);
+                } else {
+                    appendToTerminal(`Erro no recorte do KMZ: ${data.message}`, 'error');
+                    alert(`Erro ao recortar KMZ: ${data.message}`);
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                appendToTerminal("Erro ao comunicar com o servidor.", 'error');
                 alert("Erro ao comunicar com o servidor.");
             });
         }

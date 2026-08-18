@@ -1861,6 +1861,326 @@ def photo_to_kmz():
         return jsonify({'status': 'error', 'message': f'Erro ao gerar o KMZ da foto: {str(e)}'}), 500
 
 
+@app.route('/api/get-kmz-info', methods=['POST'])
+def get_kmz_info():
+    """
+    Inspeciona um arquivo KMZ, extrai suas coordenadas limites e gera uma miniatura rápida em base64.
+    """
+    import zipfile
+    import io
+    import re
+    import math
+    import base64
+    from PIL import Image
+
+    data = request.json or {}
+    kmz_path = data.get('kmz_path')
+
+    if not kmz_path or not os.path.exists(kmz_path) or not os.path.isfile(kmz_path):
+        return jsonify({'status': 'error', 'message': 'Arquivo KMZ não encontrado.'}), 400
+
+    try:
+        size_mb = os.path.getsize(kmz_path) / (1024 * 1024)
+        
+        # Extrair imagem em resolução intermediária para preview
+        arr, corners = _extract_kmz_image_and_coords(kmz_path, target_max_dim=1024)
+        sw, se, ne, nw = corners
+
+        # Calcular Bounding Box geográfico (N/S/E/W)
+        north = max(sw[1], se[1], ne[1], nw[1])
+        south = min(sw[1], se[1], ne[1], nw[1])
+        east = max(sw[0], se[0], ne[0], nw[0])
+        west = min(sw[0], se[0], ne[0], nw[0])
+        center_lat = (north + south) / 2.0
+        center_lon = (east + west) / 2.0
+
+        # Gerar miniatura base64 (máx 512px)
+        img = Image.fromarray(arr)
+        img_thumb = img.copy()
+        img_thumb.thumbnail((512, 512), Image.Resampling.LANCZOS)
+        
+        buf = io.BytesIO()
+        img_thumb.save(buf, format='PNG', optimize=True)
+        b64_str = base64.b64encode(buf.getvalue()).decode('utf-8')
+        preview_data_url = f"data:image/png;base64,{b64_str}"
+
+        return jsonify({
+            'status': 'success',
+            'name': os.path.basename(kmz_path),
+            'size_mb': round(size_mb, 1),
+            'dimensions': {'width': img.width, 'height': img.height},
+            'bounds': {
+                'north': north,
+                'south': south,
+                'east': east,
+                'west': west,
+                'center_lat': center_lat,
+                'center_lon': center_lon
+            },
+            'quad': {
+                'sw': sw,
+                'se': se,
+                'ne': ne,
+                'nw': nw
+            },
+            'preview_url': preview_data_url
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'message': f'Erro ao inspecionar KMZ: {str(e)}'}), 500
+
+
+@app.route('/api/crop-kmz', methods=['POST'])
+def crop_kmz():
+    """
+    Recorta ou desmembra um arquivo KMZ pesado em sub-KMZs leves e georreferenciados.
+    Suporta:
+    - percent: Recorte por porcentagem de margem (topo, fundo, esq, dir)
+    - bounds: Recorte por coordenadas geográficas (Norte, Sul, Leste, Oeste)
+    - grid: Fatiamento em grade (2x2, 1x2, 2x1, 3x3, 4x4)
+    - kml_poly: Recorte ao redor de polígono de limite KML
+    """
+    import zipfile
+    import io
+    import re
+    import math
+    import numpy as np
+    from PIL import Image
+
+    data = request.json or {}
+    kmz_path = data.get('kmz_path')
+    crop_mode = data.get('crop_mode', 'percent')  # 'percent', 'bounds', 'grid', 'kml_poly'
+    quality = data.get('quality', 'large')       # 'small', 'medium', 'large', 'ultra'
+    custom_name = data.get('custom_name', '').strip()
+
+    if not kmz_path or not os.path.exists(kmz_path) or not os.path.isfile(kmz_path):
+        return jsonify({'status': 'error', 'message': 'Arquivo KMZ de origem não encontrado.'}), 400
+
+    # Resolução máxima de amostragem
+    quality_map = {
+        'small': 1024,
+        'medium': 2048,
+        'large': 4096,
+        'ultra': 8192
+    }
+    max_dim = quality_map.get(quality, 4096)
+
+    try:
+        dir_name = os.path.dirname(kmz_path)
+        base_name = os.path.basename(kmz_path)
+        name_part, ext_part = os.path.splitext(base_name)
+
+        if not custom_name:
+            custom_name = f"{name_part}_recorte"
+
+        # 1. Extrair imagem completa e coordenadas de 4 cantos
+        arr, corners = _extract_kmz_image_and_coords(kmz_path, target_max_dim=max_dim)
+        sw0, se0, ne0, nw0 = corners
+        img_full = Image.fromarray(arr)
+        img_w, img_h = img_full.size
+
+        def get_geo_at_uv(u, v):
+            """Calcula a coordenada geográfica (lon, lat) para a coordenada normalizada UV (0..1)."""
+            u = max(0.0, min(1.0, u))
+            v = max(0.0, min(1.0, v))
+            lon = (1.0 - u) * (1.0 - v) * nw0[0] + u * (1.0 - v) * ne0[0] + (1.0 - u) * v * sw0[0] + u * v * se0[0]
+            lat = (1.0 - u) * (1.0 - v) * nw0[1] + u * (1.0 - v) * ne0[1] + (1.0 - u) * v * sw0[1] + u * v * se0[1]
+            return lon, lat
+
+        def solve_bilinear_uv_from_geo(lon, lat):
+            """Calcula a posição UV (0..1, 0..1) correspondente a uma coordenada geográfica (lon, lat)."""
+            u, v = 0.5, 0.5
+            p00, p10, p01, p11 = sw0, se0, nw0, ne0  # SW, SE, NW, NE
+            for _ in range(25):
+                fx = (1-u)*(1-v)*p00[0] + u*(1-v)*p10[0] + (1-u)*v*p01[0] + u*v*p11[0] - lon
+                fy = (1-u)*(1-v)*p00[1] + u*(1-v)*p10[1] + (1-u)*v*p01[1] + u*v*p11[1] - lat
+                if abs(fx) < 1e-11 and abs(fy) < 1e-11: break
+                dfx_du = -(1-v)*p00[0] + (1-v)*p10[0] - v*p01[0] + v*p11[0]
+                dfx_dv = -(1-u)*p00[0] - u*p10[0] + (1-u)*p01[0] + u*p11[0]
+                dfy_du = -(1-v)*p00[1] + (1-v)*p10[1] - v*p01[1] + v*p11[1]
+                dfy_dv = -(1-u)*p00[1] - u*p10[1] + (1-u)*p01[1] + u*p11[1]
+                det = dfx_du * dfy_dv - dfx_dv * dfy_du
+                if abs(det) < 1e-18: break
+                u -= (dfy_dv * fx - dfx_dv * fy) / det
+                v -= (-dfy_du * fx + dfx_du * fy) / det
+            # Inverter V para o sistema de imagem (0=Top, 1=Bottom)
+            v_img = 1.0 - max(0.0, min(1.0, v))
+            u_img = max(0.0, min(1.0, u))
+            return u_img, v_img
+
+        def save_sub_kmz(u_min, v_min, u_max, v_max, output_filepath, label=""):
+            """Recorta a sub-região UV e salva como KMZ leve autocontido."""
+            # Coordenadas em pixels
+            x1 = max(0, min(img_w - 2, int(round(u_min * img_w))))
+            y1 = max(0, min(img_h - 2, int(round(v_min * img_h))))
+            x2 = max(x1 + 2, min(img_w, int(round(u_max * img_w))))
+            y2 = max(y1 + 2, min(img_h, int(round(v_max * img_h))))
+
+            # Recortar imagem
+            sub_img = img_full.crop((x1, y1, x2, y2))
+            
+            # Se for maior que a resolução alvo, redimensionar
+            if max(sub_img.width, sub_img.height) > max_dim:
+                sub_img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+
+            # Calcular os 4 novos cantos geográficos exatos
+            c_nw = get_geo_at_uv(u_min, v_min)
+            c_ne = get_geo_at_uv(u_max, v_min)
+            c_se = get_geo_at_uv(u_max, v_max)
+            c_sw = get_geo_at_uv(u_min, v_max)
+
+            coords_str = f"{c_sw[0]:.8f},{c_sw[1]:.8f},0 {c_se[0]:.8f},{c_se[1]:.8f},0 {c_ne[0]:.8f},{c_ne[1]:.8f},0 {c_nw[0]:.8f},{c_nw[1]:.8f},0"
+            sub_name = os.path.splitext(os.path.basename(output_filepath))[0]
+
+            doc_kml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>{sub_name}</name>
+    <GroundOverlay>
+      <name>{sub_name}</name>
+      <description>Recorte Otimizado de KMZ {label}</description>
+      <drawOrder>999</drawOrder>
+      <Icon>
+        <href>preview.png</href>
+      </Icon>
+      <gx:LatLonQuad>
+        <coordinates>
+          {coords_str}
+        </coordinates>
+      </gx:LatLonQuad>
+    </GroundOverlay>
+  </Document>
+</kml>"""
+
+            img_bytes = io.BytesIO()
+            sub_img.save(img_bytes, format='PNG', optimize=True)
+            
+            with zipfile.ZipFile(output_filepath, 'w', zipfile.ZIP_DEFLATED) as zout:
+                zout.writestr("doc.kml", doc_kml)
+                zout.writestr("preview.png", img_bytes.getvalue())
+
+            size_mb = os.path.getsize(output_filepath) / (1024 * 1024)
+            return {
+                'path': output_filepath,
+                'name': os.path.basename(output_filepath),
+                'size_mb': round(size_mb, 2),
+                'dimensions': f"{sub_img.width}x{sub_img.height}px"
+            }
+
+        generated_files = []
+
+        # MODO A: Recorte por Porcentagem de Margens
+        if crop_mode == 'percent':
+            pct_top = float(data.get('pct_top', 0.0)) / 100.0
+            pct_bottom = float(data.get('pct_bottom', 0.0)) / 100.0
+            pct_left = float(data.get('pct_left', 0.0)) / 100.0
+            pct_right = float(data.get('pct_right', 0.0)) / 100.0
+
+            u_min = max(0.0, min(0.95, pct_left))
+            u_max = max(u_min + 0.05, min(1.0, 1.0 - pct_right))
+            v_min = max(0.0, min(0.95, pct_top))
+            v_max = max(v_min + 0.05, min(1.0, 1.0 - pct_bottom))
+
+            out_file = os.path.join(dir_name, f"{custom_name}.kmz")
+            res = save_sub_kmz(u_min, v_min, u_max, v_max, out_file, "(Recorte por Margem)")
+            generated_files.append(res)
+
+        # MODO B: Recorte por Coordenadas Limites (N/S/E/W)
+        elif crop_mode == 'bounds':
+            c_north = float(data.get('north'))
+            c_south = float(data.get('south'))
+            c_east = float(data.get('east'))
+            c_west = float(data.get('west'))
+
+            u1, v1 = solve_bilinear_uv_from_geo(c_west, c_north)
+            u2, v2 = solve_bilinear_uv_from_geo(c_east, c_south)
+
+            u_min = min(u1, u2)
+            u_max = max(u1, u2)
+            v_min = min(v1, v2)
+            v_max = max(v1, v2)
+
+            out_file = os.path.join(dir_name, f"{custom_name}.kmz")
+            res = save_sub_kmz(u_min, v_min, u_max, v_max, out_file, "(Recorte por Coordenadas)")
+            generated_files.append(res)
+
+        # MODO C: Desmembrar em Grade (2x2, 1x2, 2x1, 3x3)
+        elif crop_mode == 'grid':
+            grid_type = data.get('grid_type', '2x2')
+            if grid_type == '1x2':
+                rows, cols = 1, 2  # Dividir Esquerda / Direita
+            elif grid_type == '2x1':
+                rows, cols = 2, 1  # Dividir Topo / Fundo
+            elif grid_type == '3x3':
+                rows, cols = 3, 3  # 9 partes
+            else:
+                rows, cols = 2, 2  # 4 partes (Padrão 2x2)
+
+            # 5% de sobreposição entre blocos para garantir costura contínua
+            overlap = 0.05
+            part_num = 1
+            
+            for r in range(rows):
+                for c in range(cols):
+                    u_min = max(0.0, (c / cols) - (overlap if c > 0 else 0.0))
+                    u_max = min(1.0, ((c + 1) / cols) + (overlap if c < cols - 1 else 0.0))
+                    v_min = max(0.0, (r / rows) - (overlap if r > 0 else 0.0))
+                    v_max = min(1.0, ((r + 1) / rows) + (overlap if r < rows - 1 else 0.0))
+
+                    out_file = os.path.join(dir_name, f"{custom_name}_parte_{part_num:02d}_R{r+1}C{c+1}.kmz")
+                    res = save_sub_kmz(u_min, v_min, u_max, v_max, out_file, f"(Parte {part_num} de {rows*cols})")
+                    generated_files.append(res)
+                    part_num += 1
+
+        # MODO D: Recorte por KML de Limite/Polígono
+        elif crop_mode == 'kml_poly':
+            kml_poly_path = data.get('kml_poly_path')
+            if not kml_poly_path or not os.path.exists(kml_poly_path):
+                return jsonify({'status': 'error', 'message': 'Arquivo KML do polígono não encontrado.'}), 400
+
+            with open(kml_poly_path, 'r', encoding='utf-8', errors='ignore') as kf:
+                kml_txt = kf.read()
+
+            coords_all = re.findall(r'([-\d\.]+),([-\d\.]+)', kml_txt)
+            if not coords_all:
+                return jsonify({'status': 'error', 'message': 'Nenhuma coordenada encontrada no KML do polígono.'}), 400
+
+            poly_lons = [float(c[0]) for c in coords_all]
+            poly_lats = [float(c[1]) for c in coords_all]
+
+            # Bounding box com margem de 10%
+            p_n = max(poly_lats)
+            p_s = min(poly_lats)
+            p_e = max(poly_lons)
+            p_w = min(poly_lons)
+
+            d_lat = (p_n - p_s) * 0.1
+            d_lon = (p_e - p_w) * 0.1
+
+            u1, v1 = solve_bilinear_uv_from_geo(p_w - d_lon, p_n + d_lat)
+            u2, v2 = solve_bilinear_uv_from_geo(p_e + d_lon, p_s - d_lat)
+
+            u_min = max(0.0, min(u1, u2))
+            u_max = min(1.0, max(u1, u2))
+            v_min = max(0.0, min(v1, v2))
+            v_max = min(1.0, max(v1, v2))
+
+            out_file = os.path.join(dir_name, f"{custom_name}.kmz")
+            res = save_sub_kmz(u_min, v_min, u_max, v_max, out_file, "(Recorte por Polígono)")
+            generated_files.append(res)
+
+        return jsonify({
+            'status': 'success',
+            'message': f'{len(generated_files)} arquivo(s) KMZ recortado(s) com sucesso!',
+            'files': generated_files
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'message': f'Erro ao recortar KMZ: {str(e)}'}), 500
+
+
 @app.route('/viewer-3d')
 
 
