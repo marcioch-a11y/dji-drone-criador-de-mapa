@@ -781,12 +781,12 @@ def generate_adjust_kmz():
     output_preview_kmz = os.path.join(dir_name, "odm_orthophoto_ajuste_visual.kmz")
 
     try:
-        # 1. Procurar por 0/0/0.kml ou similar no KMZ original
+        # 1. Procurar por KML de metadados no KMZ (0/0/0.kml, doc.kml ou qualquer KML)
         print(f"[Generate KMZ] Reading ZIP file at: {kmz_path}")
         with zipfile.ZipFile(kmz_path, 'r') as z:
             names = z.namelist()
             
-            # Encontra o arquivo KML da raiz do tile
+            # Encontra o arquivo KML principal
             root_tile_kml_name = None
             for name in names:
                 if name.endswith('0/0/0.kml'):
@@ -794,16 +794,18 @@ def generate_adjust_kmz():
                     break
             
             if not root_tile_kml_name:
-                # Fallback: pega o primeiro kml de nível mais baixo
-                kmls = [n for n in names if n.lower().endswith('.kml') and n != 'doc.kml']
-                if kmls:
-                    kmls.sort(key=len)
-                    root_tile_kml_name = kmls[0]
+                if 'doc.kml' in names:
+                    root_tile_kml_name = 'doc.kml'
+                else:
+                    kmls = [n for n in names if n.lower().endswith('.kml')]
+                    if kmls:
+                        kmls.sort(key=len)
+                        root_tile_kml_name = kmls[0]
             
             if not root_tile_kml_name:
                 return jsonify({'status': 'error', 'message': 'Não foi possível encontrar o arquivo de metadados das imagens no KMZ.'}), 400
 
-            # Ler o KML do tile raiz para extrair as coordenadas
+            # Ler o KML para extrair as coordenadas
             tile_kml_content = z.read(root_tile_kml_name).decode('utf-8', errors='ignore')
             
             # Extrair latitude e longitude limites com cálculo de rotação para LatLonBox
@@ -879,49 +881,70 @@ def generate_adjust_kmz():
                 except Exception as ex:
                     print(f"[Generate KMZ] Erro ao ler GeoTIFF: {ex}")
 
-            # Método 2: Montar tiles do KMZ em alta resolução (Nível 3 ou 4)
+            # Método 2: Montar tiles do KMZ em alta resolução (se for pirâmide de tiles)
             if base_img is None:
                 try:
-                    png_tiles = [n for n in names if n.endswith('.png') and n != 'preview.png']
+                    png_tiles = [n for n in names if n.endswith('.png') and n != 'preview.png' and '/' in n]
                     levels = sorted(list(set([int(n.split('/')[0]) for n in png_tiles if n.split('/')[0].isdigit()])))
                     
-                    # Escolhe o nível ideal para alta resolução
-                    target_lvl = 3
-                    if 4 in levels:
-                        target_lvl = 4
-                    elif 3 in levels:
+                    if levels:
                         target_lvl = 3
-                    elif levels:
-                        target_lvl = max(levels)
-                    
-                    print(f"[Generate KMZ] Montando tiles do KMZ em Alta Resolução (Nível {target_lvl})...")
-                    
-                    sample_tile_name = [n for n in png_tiles if n.startswith(f'{target_lvl}/')][0]
-                    sample_img = Image.open(io.BytesIO(z.read(sample_tile_name)))
-                    tile_w, tile_h = sample_img.size
-                    num_tiles = 2 ** target_lvl
-                    
-                    stitched = Image.new('RGBA', (tile_w * num_tiles, tile_h * num_tiles), (0, 0, 0, 0))
-                    
-                    for col in range(num_tiles):
-                        for row in range(num_tiles):
-                            tile_name = f"{target_lvl}/{col}/{row}.png"
-                            if tile_name in names:
-                                data = z.read(tile_name)
-                                if len(data) > 0:
-                                    timg = Image.open(io.BytesIO(data)).convert('RGBA')
-                                    stitched.paste(timg, (col * tile_w, (num_tiles - 1 - row) * tile_h))
-                    
-                    base_img = stitched
-                    print(f"[Generate KMZ] Tiles montados com sucesso! Resolução: {base_img.size[0]}x{base_img.size[1]}px")
+                        if 4 in levels:
+                            target_lvl = 4
+                        elif 3 in levels:
+                            target_lvl = 3
+                        elif levels:
+                            target_lvl = max(levels)
+                        
+                        print(f"[Generate KMZ] Montando tiles do KMZ em Alta Resolução (Nível {target_lvl})...")
+                        
+                        sample_candidates = [n for n in png_tiles if n.startswith(f'{target_lvl}/')]
+                        if sample_candidates:
+                            sample_tile_name = sample_candidates[0]
+                            sample_img = Image.open(io.BytesIO(z.read(sample_tile_name)))
+                            tile_w, tile_h = sample_img.size
+                            num_tiles = 2 ** target_lvl
+                            
+                            stitched = Image.new('RGBA', (tile_w * num_tiles, tile_h * num_tiles), (0, 0, 0, 0))
+                            
+                            for col in range(num_tiles):
+                                for row in range(num_tiles):
+                                    tile_name = f"{target_lvl}/{col}/{row}.png"
+                                    if tile_name in names:
+                                        data = z.read(tile_name)
+                                        if len(data) > 0:
+                                            timg = Image.open(io.BytesIO(data)).convert('RGBA')
+                                            stitched.paste(timg, (col * tile_w, (num_tiles - 1 - row) * tile_h))
+                            
+                            base_img = stitched
+                            print(f"[Generate KMZ] Tiles montados com sucesso! Resolução: {base_img.size[0]}x{base_img.size[1]}px")
                 except Exception as ex:
                     print(f"[Generate KMZ] Erro ao montar tiles: {ex}")
 
-            # Fallback Método 3: Imagem raiz 0/0/0.png
+            # Método 3: Imagem direta do KMZ (preview.png, href do KML ou maior imagem)
             if base_img is None:
-                image_name = root_tile_kml_name.replace('.kml', '.png')
-                if image_name in names:
-                    base_img = Image.open(io.BytesIO(z.read(image_name))).convert('RGBA')
+                # Procura por href no KML
+                href_match = re.search(r'<href>([^<]+)</href>', tile_kml_content)
+                candidates = []
+                if href_match:
+                    candidates.append(href_match.group(1).strip())
+                candidates.extend(['preview.png', '0/0/0.png'])
+                # Adiciona todas as imagens encontradas no zip
+                img_exts = ('.png', '.jpg', '.jpeg', '.webp', '.tif', '.tiff')
+                candidates.extend([n for n in names if n.lower().endswith(img_exts)])
+                
+                for cand in candidates:
+                    norm_cand = cand.replace('\\', '/')
+                    matching = [n for n in names if n.replace('\\', '/').endswith(norm_cand) or norm_cand.endswith(n.replace('\\', '/'))]
+                    if matching:
+                        try:
+                            data = z.read(matching[0])
+                            if len(data) > 0:
+                                base_img = Image.open(io.BytesIO(data)).convert('RGBA')
+                                print(f"[Generate KMZ] Imagem direta carregada: {matching[0]} ({base_img.size[0]}x{base_img.size[1]}px)")
+                                break
+                        except Exception as ex_img:
+                            print(f"[Generate KMZ] Erro lendo imagem {matching[0]}: {ex_img}")
 
             if base_img is None:
                 return jsonify({'status': 'error', 'message': 'Nenhuma imagem pôde ser extraída do KMZ.'}), 400
