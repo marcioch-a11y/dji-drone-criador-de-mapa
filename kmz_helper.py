@@ -4,21 +4,22 @@ import io
 import math
 import json
 import zipfile
-from datetime import datetime
 import numpy as np
 from PIL import Image, ImageEnhance, ImageDraw
 
 
 def parse_kml_coordinates(kml_content):
     """
-    Extrai coordenadas geográficas de qualquer arquivo KML (LatLonQuad ou LatLonBox),
+    Extrai coordenadas geográficas de qualquer arquivo KML (LatLonQuad, LatLonBox ou LatLonAltBox),
     independentemente de namespaces (gx:, kml:, etc.).
     Retorna: (north, south, east, west, rotation_deg, center_lat, center_lon, coords_quad)
     """
     # 1. Tenta extrair gx:LatLonQuad ou LatLonQuad
     quad_match = re.search(r'<(?:\w+:)?(?:LatLonQuad|gx:LatLonQuad)>[\s\S]*?<(?:\w+:)?coordinates>\s*([^<]+)\s*</(?:\w+:)?coordinates>', kml_content, re.IGNORECASE)
     if not quad_match:
-        quad_match = re.search(r'<(?:\w+:)?coordinates>\s*([^<]+)\s*</(?:\w+:)?coordinates>', kml_content, re.IGNORECASE)
+        # Se for um GroundOverlay com coordinates
+        if '<GroundOverlay' in kml_content:
+            quad_match = re.search(r'<(?:\w+:)?coordinates>\s*([^<]+)\s*</(?:\w+:)?coordinates>', kml_content, re.IGNORECASE)
 
     if quad_match:
         pts = quad_match.group(1).strip().split()
@@ -55,7 +56,7 @@ def parse_kml_coordinates(kml_content):
 
             return north_coord, south_coord, east_coord, west_coord, rotation_deg, center_lat, center_lon, coords
 
-    # 2. Tenta extrair LatLonBox padrão (north, south, east, west)
+    # 2. Tenta extrair LatLonBox ou LatLonAltBox (north, south, east, west)
     n_m = re.search(r'<(?:\w+:)?north>\s*([-]?\d+\.?\d*)\s*</(?:\w+:)?north>', kml_content, re.I)
     s_m = re.search(r'<(?:\w+:)?south>\s*([-]?\d+\.?\d*)\s*</(?:\w+:)?south>', kml_content, re.I)
     e_m = re.search(r'<(?:\w+:)?east>\s*([-]?\d+\.?\d*)\s*</(?:\w+:)?east>', kml_content, re.I)
@@ -76,9 +77,9 @@ def parse_kml_coordinates(kml_content):
     return None, None, None, None, 0.0, None, None, None
 
 
-def extract_kmz_info(kmz_path):
+def extract_kmz_info(kmz_path, depth=0):
     """
-    Lê qualquer arquivo KMZ e extrai:
+    Lê qualquer arquivo KMZ (incluindo NetworkLinks, tiles WebODM ou GroundOverlay único) e extrai:
     - Imagem base PIL RGBA (resolução otimizada)
     - Coordenadas geográficas limites e rotação
     - Metadados estruturados
@@ -127,11 +128,9 @@ def extract_kmz_info(kmz_path):
                     center_lat = (north + south) / 2.0
                     center_lon = (east + west) / 2.0
                     rotation_deg = 0.0
+                    coords = [(west, south), (east, south), (east, north), (west, north)]
             except:
                 pass
-
-        if north is None or south is None or east is None or west is None:
-            raise ValueError("Não foi possível ler as coordenadas geográficas do KMZ.")
 
         # 2. Extração da Imagem
         base_img = None
@@ -194,6 +193,45 @@ def extract_kmz_info(kmz_path):
                         break
                 except:
                     pass
+
+        # Método D: Resolução de NetworkLink (se o KMZ for um wrapper de atalho do Google Earth)
+        if base_img is None and depth < 3:
+            href_matches = re.findall(r'<href>([^<]+)</href>', kml_content, re.IGNORECASE)
+            for href in href_matches:
+                href = href.strip().replace('\\', '/')
+                # Se aponta para um KMZ relativo
+                kmz_target = None
+                if '.kmz' in href.lower():
+                    kmz_part = href[:href.lower().find('.kmz') + 4]
+                    cand_target = os.path.normpath(os.path.join(dir_name, kmz_part))
+                    if os.path.exists(cand_target) and cand_target != os.path.normpath(kmz_path):
+                        kmz_target = cand_target
+                elif href.lower().endswith(('.png', '.jpg', '.jpeg', '.tif')):
+                    cand_img = os.path.normpath(os.path.join(dir_name, href))
+                    if os.path.exists(cand_img):
+                        try:
+                            with Image.open(cand_img) as limg:
+                                limg.thumbnail((4096, 4096), Image.Resampling.LANCZOS)
+                                base_img = limg.convert('RGBA')
+                                break
+                        except:
+                            pass
+
+                if kmz_target:
+                    try:
+                        print(f"[KMZ Helper] Seguindo NetworkLink para: {kmz_target}")
+                        sub_info = extract_kmz_info(kmz_target, depth=depth + 1)
+                        if base_img is None:
+                            base_img = sub_info['img']
+                        if north is None:
+                            north, south, east, west = sub_info['north'], sub_info['south'], sub_info['east'], sub_info['west']
+                            rotation_deg, center_lat, center_lon, coords = sub_info['rotation'], sub_info['center_lat'], sub_info['center_lon'], sub_info['coords']
+                        break
+                    except Exception as ex_sub:
+                        print(f"[KMZ Helper] Erro ao seguir NetworkLink: {ex_sub}")
+
+        if north is None or south is None or east is None or west is None:
+            raise ValueError("Não foi possível ler as coordenadas geográficas do KMZ.")
 
         if base_img is None:
             raise ValueError("Nenhuma imagem válida pôde ser extraída do arquivo KMZ.")
