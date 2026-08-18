@@ -36,6 +36,6 @@ def index():
 
 if __name__ == '__main__':
     print("=======================================================")
-    print("🚁 DJI Drone - Criador de Mapas Iniciado (Porta 5001)")
+    print("[DJI Drone - Criador de Mapas] Servidor Iniciado (Porta 5001)")
     print("=======================================================")
     app.run(host='0.0.0.0', port=5001, debug=False)
