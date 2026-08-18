@@ -758,259 +758,28 @@ def adjust_kmz():
 
 @app.route('/api/generate-adjust-kmz', methods=['POST'])
 def generate_adjust_kmz():
-    import zipfile
-    import re
-
     data = request.json or {}
-    kmz_path = data.get('kmz_path')
+    kmz_path = data.get('kmz_path', '').strip()
     print(f"[Generate KMZ] Path received: {kmz_path}")
 
     if not kmz_path or not os.path.exists(kmz_path):
-        print(f"[Generate KMZ] Error: path not found or empty. Path: {kmz_path}")
         return jsonify({'status': 'error', 'message': 'Arquivo KMZ original não encontrado.'}), 400
 
-    if not os.path.isfile(kmz_path):
-        print(f"[Generate KMZ] Error: path is a directory, not a file. Path: {kmz_path}")
-        return jsonify({'status': 'error', 'message': 'O caminho selecionado é uma pasta. Por favor, selecione o arquivo .kmz dentro dela.'}), 400
-
-    if not kmz_path.lower().endswith('.kmz'):
-        print(f"[Generate KMZ] Error: file is not a .kmz. Path: {kmz_path}")
+    if not os.path.isfile(kmz_path) or not kmz_path.lower().endswith('.kmz'):
         return jsonify({'status': 'error', 'message': 'Por favor, selecione um arquivo com a extensão .kmz.'}), 400
 
-    dir_name = os.path.dirname(kmz_path)
-    output_preview_kmz = os.path.join(dir_name, "odm_orthophoto_ajuste_visual.kmz")
-
     try:
-        # 1. Procurar por KML de metadados no KMZ (0/0/0.kml, doc.kml ou qualquer KML)
-        print(f"[Generate KMZ] Reading ZIP file at: {kmz_path}")
-        with zipfile.ZipFile(kmz_path, 'r') as z:
-            names = z.namelist()
-            
-            # Encontra o arquivo KML principal
-            root_tile_kml_name = None
-            for name in names:
-                if name.endswith('0/0/0.kml'):
-                    root_tile_kml_name = name
-                    break
-            
-            if not root_tile_kml_name:
-                if 'doc.kml' in names:
-                    root_tile_kml_name = 'doc.kml'
-                else:
-                    kmls = [n for n in names if n.lower().endswith('.kml')]
-                    if kmls:
-                        kmls.sort(key=len)
-                        root_tile_kml_name = kmls[0]
-            
-            if not root_tile_kml_name:
-                return jsonify({'status': 'error', 'message': 'Não foi possível encontrar o arquivo de metadados das imagens no KMZ.'}), 400
-
-            # Ler o KML para extrair as coordenadas
-            tile_kml_content = z.read(root_tile_kml_name).decode('utf-8', errors='ignore')
-            
-            # Extrair latitude e longitude limites com cálculo de rotação para LatLonBox
-            import math
-            coords_match = re.search(r'<gx:LatLonQuad>\s*<coordinates>\s*([^<]+)\s*</coordinates>', tile_kml_content, re.DOTALL)
-            
-            if coords_match:
-                pts = coords_match.group(1).strip().split()
-                coords = []
-                for pt in pts:
-                    parts = pt.split(',')
-                    if len(parts) >= 2:
-                        coords.append((float(parts[0]), float(parts[1])))
-                
-                # gx:LatLonQuad: 0=SW, 1=SE, 2=NE, 3=NW
-                sw_lon, sw_lat = coords[0]
-                se_lon, se_lat = coords[1]
-                ne_lon, ne_lat = coords[2]
-                nw_lon, nw_lat = coords[3]
-                
-                center_lat = (sw_lat + se_lat + ne_lat + nw_lat) / 4.0
-                center_lon = (sw_lon + se_lon + ne_lon + nw_lon) / 4.0
-                
-                cos_lat = math.cos(math.radians(center_lat))
-                dx = (se_lon - sw_lon) * cos_lat
-                dy = (se_lat - sw_lat)
-                rotation_deg = math.degrees(math.atan2(dy, dx))
-                
-                width_deg = math.sqrt(((se_lon - sw_lon) * cos_lat) ** 2 + (se_lat - sw_lat) ** 2) / cos_lat
-                height_deg = math.sqrt(((nw_lon - sw_lon) * cos_lat) ** 2 + (nw_lat - sw_lat) ** 2)
-                
-                north_coord = center_lat + height_deg / 2.0
-                south_coord = center_lat - height_deg / 2.0
-                east_coord = center_lon + width_deg / 2.0
-                west_coord = center_lon - width_deg / 2.0
-            else:
-                north_val = re.search(r'<north>([^<]+)</north>', tile_kml_content)
-                south_val = re.search(r'<south>([^<]+)</south>', tile_kml_content)
-                east_val = re.search(r'<east>([^<]+)</east>', tile_kml_content)
-                west_val = re.search(r'<west>([^<]+)</west>', tile_kml_content)
-                if north_val and south_val and east_val and west_val:
-                    north_coord = float(north_val.group(1))
-                    south_coord = float(south_val.group(1))
-                    east_coord = float(east_val.group(1))
-                    west_coord = float(west_val.group(1))
-                    rotation_deg = 0.0
-                else:
-                    return jsonify({'status': 'error', 'message': 'Não foi possível ler as coordenadas do KMZ.'}), 400
-
-            # Geração da imagem de pré-visualização de ALTA RESOLUÇÃO e ALTO CONTRASTE
-            from PIL import Image, ImageEnhance, ImageDraw
-            import io
-            import numpy as np
-
-            preview_image_data = None
-            
-            # Método 1: Tentar GeoTIFF se disponível
-            tif_names = ["odm_orthophoto_leve.tif", "odm_orthophoto.tif"]
-            tif_path = None
-            for tif_name in tif_names:
-                p = os.path.join(dir_name, tif_name)
-                if os.path.exists(p):
-                    tif_path = p
-                    break
-            
-            base_img = None
-            if tif_path:
-                try:
-                    print(f"[Generate KMZ] Lendo imagem do GeoTIFF: {tif_path}")
-                    with Image.open(tif_path) as img:
-                        img.thumbnail((4096, 4096), Image.Resampling.LANCZOS)
-                        base_img = img.convert('RGBA')
-                except Exception as ex:
-                    print(f"[Generate KMZ] Erro ao ler GeoTIFF: {ex}")
-
-            # Método 2: Montar tiles do KMZ em alta resolução (se for pirâmide de tiles)
-            if base_img is None:
-                try:
-                    png_tiles = [n for n in names if n.endswith('.png') and n != 'preview.png' and '/' in n]
-                    levels = sorted(list(set([int(n.split('/')[0]) for n in png_tiles if n.split('/')[0].isdigit()])))
-                    
-                    if levels:
-                        target_lvl = 3
-                        if 4 in levels:
-                            target_lvl = 4
-                        elif 3 in levels:
-                            target_lvl = 3
-                        elif levels:
-                            target_lvl = max(levels)
-                        
-                        print(f"[Generate KMZ] Montando tiles do KMZ em Alta Resolução (Nível {target_lvl})...")
-                        
-                        sample_candidates = [n for n in png_tiles if n.startswith(f'{target_lvl}/')]
-                        if sample_candidates:
-                            sample_tile_name = sample_candidates[0]
-                            sample_img = Image.open(io.BytesIO(z.read(sample_tile_name)))
-                            tile_w, tile_h = sample_img.size
-                            num_tiles = 2 ** target_lvl
-                            
-                            stitched = Image.new('RGBA', (tile_w * num_tiles, tile_h * num_tiles), (0, 0, 0, 0))
-                            
-                            for col in range(num_tiles):
-                                for row in range(num_tiles):
-                                    tile_name = f"{target_lvl}/{col}/{row}.png"
-                                    if tile_name in names:
-                                        data = z.read(tile_name)
-                                        if len(data) > 0:
-                                            timg = Image.open(io.BytesIO(data)).convert('RGBA')
-                                            stitched.paste(timg, (col * tile_w, (num_tiles - 1 - row) * tile_h))
-                            
-                            base_img = stitched
-                            print(f"[Generate KMZ] Tiles montados com sucesso! Resolução: {base_img.size[0]}x{base_img.size[1]}px")
-                except Exception as ex:
-                    print(f"[Generate KMZ] Erro ao montar tiles: {ex}")
-
-            # Método 3: Imagem direta do KMZ (preview.png, href do KML ou maior imagem)
-            if base_img is None:
-                # Procura por href no KML
-                href_match = re.search(r'<href>([^<]+)</href>', tile_kml_content)
-                candidates = []
-                if href_match:
-                    candidates.append(href_match.group(1).strip())
-                candidates.extend(['preview.png', '0/0/0.png'])
-                # Adiciona todas as imagens encontradas no zip
-                img_exts = ('.png', '.jpg', '.jpeg', '.webp', '.tif', '.tiff')
-                candidates.extend([n for n in names if n.lower().endswith(img_exts)])
-                
-                for cand in candidates:
-                    norm_cand = cand.replace('\\', '/')
-                    matching = [n for n in names if n.replace('\\', '/').endswith(norm_cand) or norm_cand.endswith(n.replace('\\', '/'))]
-                    if matching:
-                        try:
-                            data = z.read(matching[0])
-                            if len(data) > 0:
-                                base_img = Image.open(io.BytesIO(data)).convert('RGBA')
-                                print(f"[Generate KMZ] Imagem direta carregada: {matching[0]} ({base_img.size[0]}x{base_img.size[1]}px)")
-                                break
-                        except Exception as ex_img:
-                            print(f"[Generate KMZ] Erro lendo imagem {matching[0]}: {ex_img}")
-
-            if base_img is None:
-                return jsonify({'status': 'error', 'message': 'Nenhuma imagem pôde ser extraída do KMZ.'}), 400
-
-            # Aplicar filtro de cor falsa (MAGENTA / VIOLETA VIVO) e aumento de contraste
-            arr = np.array(base_img, dtype=np.float32)
-            alpha_mask = arr[:, :, 3] > 10
-            
-            arr[:, :, 0] = np.clip(arr[:, :, 0] * 1.5 + 50, 0, 255)
-            arr[:, :, 1] = np.clip(arr[:, :, 1] * 0.15, 0, 255)
-            arr[:, :, 2] = np.clip(arr[:, :, 2] * 1.3 + 40, 0, 255)
-            arr[~alpha_mask, 3] = 0
-            
-            img_tinted = Image.fromarray(arr.astype(np.uint8), 'RGBA')
-            
-            enhancer = ImageEnhance.Contrast(img_tinted)
-            img_tinted = enhancer.enhance(1.4)
-            enhancer = ImageEnhance.Sharpness(img_tinted)
-            img_tinted = enhancer.enhance(1.6)
-            
-            draw = ImageDraw.Draw(img_tinted)
-            border_w = max(4, img_tinted.width // 300)
-            for i in range(border_w):
-                draw.rectangle(
-                    [i, i, img_tinted.width - 1 - i, img_tinted.height - 1 - i],
-                    outline=(255, 255, 0, 240)
-                )
-            
-            img_byte_arr = io.BytesIO()
-            img_tinted.save(img_byte_arr, format='PNG', optimize=True)
-            preview_image_data = img_byte_arr.getvalue()
-            print(f"[Generate KMZ] KMZ de ajuste gerado ({img_tinted.width}x{img_tinted.height}px - Rot={rotation_deg:.2f}°).")
-
-        # 2. Criar o novo KMZ simplificado para ajuste visual
-        doc_kml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-  <GroundOverlay>
-    <name>Mova-me no Google Earth (Ajustador)</name>
-    <description>Mova esta imagem no Google Earth Pro (Botao Direito -&gt; Propriedades) e depois salve como KMZ para aplicar o ajuste no mapa completo. IMAGEM EM FALSA-COR MAGENTA para maximo contraste.</description>
-    <drawOrder>999</drawOrder>
-    <Icon>
-      <href>preview.png</href>
-    </Icon>
-    <LatLonBox>
-      <north>{north_coord:.8f}</north>
-      <south>{south_coord:.8f}</south>
-      <east>{east_coord:.8f}</east>
-      <west>{west_coord:.8f}</west>
-      <rotation>{rotation_deg:.8f}</rotation>
-    </LatLonBox>
-  </GroundOverlay>
-</kml>"""
-
-        with zipfile.ZipFile(output_preview_kmz, 'w', zipfile.ZIP_DEFLATED) as zip_out:
-            zip_out.writestr("doc.kml", doc_kml_content)
-            zip_out.writestr("preview.png", preview_image_data)
-
+        from kmz_helper import generate_visual_adjustment_kmz
+        output_kmz = generate_visual_adjustment_kmz(kmz_path)
         return jsonify({
             'status': 'success',
             'message': 'KMZ de ajuste visual criado com sucesso!',
-            'output_path': output_preview_kmz
+            'output_path': output_kmz
         })
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'status': 'error', 'message': f'Erro ao gerar o KMZ de ajuste: {str(e)}'}), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 400
 
 
 @app.route('/api/apply-visual-adjust', methods=['POST'])
