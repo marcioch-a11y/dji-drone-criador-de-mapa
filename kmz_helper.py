@@ -297,25 +297,22 @@ def generate_visual_adjustment_kmz(kmz_path, output_path=None):
         output_path = os.path.join(dir_name, "odm_orthophoto_ajuste_visual.kmz")
 
     doc_kml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
-  <Document>
-    <name>Ajuste Visual - Google Earth</name>
-    <GroundOverlay>
-      <name>Mova-me no Google Earth (Ajustador)</name>
-      <description>Mova esta imagem no Google Earth Pro (Botao Direito -&gt; Propriedades) e depois salve como KMZ para aplicar o ajuste no mapa completo.</description>
-      <drawOrder>999</drawOrder>
-      <Icon>
-        <href>preview.png</href>
-      </Icon>
-      <LatLonBox>
-        <north>{north:.8f}</north>
-        <south>{south:.8f}</south>
-        <east>{east:.8f}</east>
-        <west>{west:.8f}</west>
-        <rotation>{rotation_deg:.8f}</rotation>
-      </LatLonBox>
-    </GroundOverlay>
-  </Document>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <GroundOverlay>
+    <name>Mova-me no Google Earth (Ajustador)</name>
+    <description>Mova esta imagem no Google Earth Pro (Botao Direito -&gt; Propriedades) e depois salve como KMZ para aplicar o ajuste no mapa completo. IMAGEM EM FALSA-COR MAGENTA para maximo contraste.</description>
+    <drawOrder>999</drawOrder>
+    <Icon>
+      <href>preview.png</href>
+    </Icon>
+    <LatLonBox>
+      <north>{north:.8f}</north>
+      <south>{south:.8f}</south>
+      <east>{east:.8f}</east>
+      <west>{west:.8f}</west>
+      <rotation>{rotation_deg:.8f}</rotation>
+    </LatLonBox>
+  </GroundOverlay>
 </kml>"""
 
     with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zout:
