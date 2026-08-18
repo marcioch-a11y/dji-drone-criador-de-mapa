@@ -230,7 +230,39 @@ def apply_visual_adjust():
                 return f"<coordinates>\n            {' '.join(new_pts)}\n          </coordinates>"
 
             pattern_quad = re.compile(r'<coordinates>\s*([^<]+)\s*</coordinates>')
-            return pattern_quad.sub(repl_quad, kml_text)
+            kml_text = pattern_quad.sub(repl_quad, kml_text)
+
+            def repl_box(match):
+                tag = match.group(1) # LatLonBox ou LatLonAltBox
+                body = match.group(2)
+                nm = re.search(r'<north>([^<]+)</north>', body)
+                sm = re.search(r'<south>([^<]+)</south>', body)
+                em = re.search(r'<east>([^<]+)</east>', body)
+                wm = re.search(r'<west>([^<]+)</west>', body)
+                if nm and sm and em and wm:
+                    n_val, s_val = float(nm.group(1)), float(sm.group(1))
+                    e_val, w_val = float(em.group(1)), float(wm.group(1))
+                    _, n_new = transform_point(c_lon_0, n_val)
+                    _, s_new = transform_point(c_lon_0, s_val)
+                    e_new, _ = transform_point(e_val, c_lat_0)
+                    w_new, _ = transform_point(w_val, c_lat_0)
+                    new_body = body
+                    new_body = re.sub(r'<north>[^<]+</north>', f'<north>{n_new:.8f}</north>', new_body)
+                    new_body = re.sub(r'<south>[^<]+</south>', f'<south>{s_new:.8f}</south>', new_body)
+                    new_body = re.sub(r'<east>[^<]+</east>', f'<east>{e_new:.8f}</east>', new_body)
+                    new_body = re.sub(r'<west>[^<]+</west>', f'<west>{w_new:.8f}</west>', new_body)
+                    if rot_deg_1 != 0.0:
+                        if '<rotation>' in new_body:
+                            new_body = re.sub(r'<rotation>[^<]+</rotation>', f'<rotation>{rot_deg_1:.6f}</rotation>', new_body)
+                        else:
+                            new_body += f'\n        <rotation>{rot_deg_1:.6f}</rotation>'
+                    return f"<{tag}>{new_body}</{tag}>"
+                return match.group(0)
+
+            pattern_box = re.compile(r'<(LatLonBox|LatLonAltBox)>(.*?)</\1>', re.DOTALL)
+            kml_text = pattern_box.sub(repl_box, kml_text)
+
+            return kml_text
 
         dir_orig = os.path.dirname(original_kmz)
         base_orig = os.path.basename(original_kmz)
@@ -249,11 +281,38 @@ def apply_visual_adjust():
                         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                             content = f.read()
 
-                        if '<gx:LatLonQuad>' in content or '<coordinates>' in content:
-                            content_updated = transform_kml(content)
+                        content_updated = transform_kml(content)
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(content_updated)
+                        kml_count += 1
+                    elif file.lower() == 'metadata.json':
+                        file_path = os.path.join(root, file)
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                meta_data = json.load(f)
+                            if 'georeference' in meta_data:
+                                geo = meta_data['georeference']
+                                if 'center' in geo:
+                                    c_lon_new, c_lat_new = transform_point(geo['center']['longitude'], geo['center']['latitude'])
+                                    geo['center']['latitude'] = c_lat_new
+                                    geo['center']['longitude'] = c_lon_new
+                                if 'bounds' in geo:
+                                    _, n_new = transform_point(c_lon_0, geo['bounds']['north'])
+                                    _, s_new = transform_point(c_lon_0, geo['bounds']['south'])
+                                    e_new, _ = transform_point(geo['bounds']['east'], c_lat_0)
+                                    w_new, _ = transform_point(geo['bounds']['west'], c_lat_0)
+                                    geo['bounds']['north'] = n_new
+                                    geo['bounds']['south'] = s_new
+                                    geo['bounds']['east'] = e_new
+                                    geo['bounds']['west'] = w_new
+                                if 'corners' in geo:
+                                    for c_name, c_pt in geo['corners'].items():
+                                        lon_c_new, lat_c_new = transform_point(c_pt[0], c_pt[1])
+                                        geo['corners'][c_name] = [lon_c_new, lat_c_new]
                             with open(file_path, 'w', encoding='utf-8') as f:
-                                f.write(content_updated)
-                            kml_count += 1
+                                json.dump(meta_data, f, indent=2)
+                        except Exception as ex_m:
+                            print(f"[KMZ ADJUST] Erro atualizando metadata.json: {ex_m}")
 
             with zipfile.ZipFile(output_kmz_path, 'w', zipfile.ZIP_DEFLATED) as zip_out:
                 for root, dirs, files in os.walk(temp_dir):
